@@ -140,3 +140,16 @@ export async function updateSettings(_patch: Partial<MailSettings>) {
   await wait();
   return { ok: true as const };
 }
+
+export interface LaunchCampaignInput {
+  campaignId: string;
+  audienceListId: string;
+  mailboxIds: string[];
+  perMailboxDaily: number;
+  sendInContactTimezone: boolean;
+}
+
+export async function launchCampaign(_input: LaunchCampaignInput) {
+  await wait(900);
+  return { ok: true as const, status: "running" as const };
+}
