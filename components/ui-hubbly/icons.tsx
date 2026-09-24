@@ -17,6 +17,13 @@ function base({ size = 16, strokeWidth = 1.7, ...rest }: IconProps) {
   };
 }
 
+export const IconGlobe = (p: IconProps) => (
+  <svg {...base(p)}><circle cx="12" cy="12" r="9" /><ellipse cx="12" cy="12" rx="4" ry="9" /><path d="M3 12h18" /></svg>
+);
+export const IconBarChart = (p: IconProps) => (
+  <svg {...base(p)}><path d="M3 3v18h18M7 16v-4M12 16V7M17 16v-7" /></svg>
+);
+
 export const IconGrid = (p: IconProps) => (
   <svg {...base(p)}>
     <rect x="3" y="3" width="7" height="7" rx="1.5" />

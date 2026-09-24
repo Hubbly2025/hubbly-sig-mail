@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { cx } from "@/components/ui-hubbly";
-import { IconChat, IconGrid, IconLock, IconMail, IconPerson, IconSend, IconSignal, IconPlug, IconSearch } from "@/components/ui-hubbly/icons";
+import { IconChat, IconGrid, IconLock, IconMail, IconPerson, IconSend, IconSignal, IconPlug, IconSearch, IconList, IconGlobe, IconBarChart } from "@/components/ui-hubbly/icons";
 import styles from "./sidebar.module.css";
 import { useResource } from "@/lib/outreach/hooks";
 import { BRAND, brandInfo, hostHref } from "@/lib/outreach/brand";
@@ -77,10 +77,14 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
       { href: hostHref("/leads"), label: "Leads", icon: <IconPerson />, host: true },
     ] },
     { label: "Outreach", items: [
+      { href: "/overview", label: "Overview", icon: <IconGrid /> },
       { href: "/approvals", label: "Approval inbox", icon: <IconCheckInbox />, badge: badge.data?.count },
       { href: "/campaigns", label: "Campaigns", icon: <IconSend /> },
+      { href: "/lists", label: "Lead lists", icon: <IconList /> },
       { href: "/mailboxes", label: "Mailboxes", icon: <IconMail /> },
+      { href: "/domains", label: "Domains", icon: <IconGlobe /> },
       { href: "/inbox", label: "Inbox", icon: <IconChat /> },
+      { href: "/pipeline", label: "Pipeline", icon: <IconBarChart /> },
     ] },
     { label: "Signal", items: [
       { href: hostHref("/pixel"), label: "Pixel & Setup", icon: <IconSignal />, host: true },
@@ -156,10 +160,12 @@ function LockedCard() {
 
 export function OutreachShell({ children }: { children: ReactNode }) {
   const status = useResource<OutreachStatus>("outreach/status");
+  const pathname = usePathname();
+  const fluidPage = ["/overview", "/lists", "/domains", "/pipeline"].includes(pathname);
   return (
     <ToastProvider>
       <StatusCtx.Provider value={status.data ?? null}>
-        <div className="flex min-h-screen min-w-[1440px] bg-bg">
+        <div className={cx("flex min-h-screen bg-bg", !fluidPage && "min-w-[1440px]")}>
           <Sidebar status={status.data} />
           <main className="flex-1 min-w-0 flex flex-col h-screen overflow-y-auto">
             {status.loading ? (

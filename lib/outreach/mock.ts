@@ -3,6 +3,9 @@
 // Delete nothing here when going live — flip NEXT_PUBLIC_OUTREACH_MOCK=0.
 
 import { lintEmail } from "./lint";
+import { sampleLists, sampleListLeads } from "./list-samples";
+import { sampleDomains } from "./domain-samples";
+import { samplePipeline } from "./pipeline-samples";
 import type {
   AudienceFilter,
   AudiencePreview,
@@ -572,6 +575,42 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
   const seg = path.split("/");
   const b = (body ?? {}) as Record<string, any>;
   const M = method.toUpperCase();
+
+  if (M === "GET" && path === "overview") return clone({
+    sent_30d: 14908, sent_delta_pct: 22, delivered_rate: 0.984, reply_rate: 0.038,
+    replies: 563, positive_replies: 219, meetings: 41, meetings_this_week: 9,
+    sending_today: { used: 318, capacity: 360, capacity_after_warmup: 480 },
+    needs_attention: [{ id: "dmarc", text: "Print houses — referral channel is paused: meethubbly.com is missing a DMARC record", href: "/mailboxes" }],
+    waiting: { replies: 6, drafts: 1 },
+  });
+
+  if (M === "GET" && path === "lists") return clone(sampleLists);
+  if (seg[0] === "lists" && seg[1]) {
+    const list = sampleLists.find((item) => item.id === seg[1]);
+    if (!list) throw new MockError(404, "This list no longer exists.");
+    if (M === "GET" && seg[2] === "leads") {
+      const page = Math.max(1, Number(q.get("page")) || 1);
+      const rows = sampleListLeads[list.id];
+      return clone({ items: rows.slice((page - 1) * 5, page * 5), total: rows.length, page, page_size: 5 });
+    }
+    if (M === "POST" && seg[2] === "cleanup") {
+      list.count -= list.verification.invalid + list.verification.duplicate;
+      list.verification.invalid = 0;
+      list.verification.duplicate = 0;
+      sampleListLeads[list.id] = sampleListLeads[list.id].filter((lead) => lead.verification !== "invalid" && lead.verification !== "duplicate");
+      return clone(list);
+    }
+  }
+
+  if (M === "GET" && path === "domains") return clone(sampleDomains);
+  if (M === "POST" && seg[0] === "domains" && seg[2] === "check") {
+    const domain = sampleDomains.find((item) => item.id === seg[1]);
+    if (!domain) throw new MockError(404, "Domain not found.");
+    if (domain.fix) throw new MockError(422, "Record not found yet. DNS changes can take up to an hour.");
+    return clone(domain);
+  }
+
+  if (M === "GET" && path === "pipeline") return clone(samplePipeline);
 
   // every page
   if (M === "GET" && path === "status") return clone(status);

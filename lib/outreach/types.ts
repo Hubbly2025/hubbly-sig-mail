@@ -22,6 +22,38 @@ export interface InboxCount {
   count: number;
 }
 
+export interface MailOverview {
+  sent_30d: number; sent_delta_pct: number; delivered_rate: number; reply_rate: number;
+  replies: number; positive_replies: number; meetings: number; meetings_this_week: number;
+  sending_today: { used: number; capacity: number; capacity_after_warmup: number };
+  needs_attention: { id: string; text: string; href: string }[];
+  waiting: { replies: number; drafts: number };
+}
+
+export type Verification = "valid" | "catch_all_verified" | "risky" | "invalid" | "duplicate";
+export interface LeadList {
+  id: string; name: string; source: "signal" | "clickrabbit" | "csv"; is_live: boolean; meta: string; count: number;
+  verification: Record<Verification, number> & { ready_to_send: number };
+}
+export interface ListLead {
+  id: string; name: string; company: string | null; email: string; email_type: "business" | "personal";
+  verification: Verification; reason: string; last_activity: string;
+}
+export interface Domain {
+  id: string; name: string; origin: "own" | "managed"; connected_at: string; mailboxes: number;
+  status: "healthy" | "warming" | "needs_fix"; warmup_day: number | null;
+  spf: boolean; dkim: boolean; dmarc: boolean; reputation: "good" | "building" | "poor";
+  daily_limit: number; daily_limit_after_warmup: number | null;
+  fix: { record: string; type: string; host: string; value: string } | null;
+}
+export interface Pipeline {
+  goal: { label: string; target: number; current: number };
+  open_value_monthly: number; won_value_monthly: number; won_count: number; assignees: string[];
+  stages: { key: string; name: string; count: number; value_monthly: number;
+    deals: { id: string; company: string; person: string; owner_initials: string; value_label: string;
+      source: "email" | "reply"; next_step: string }[] }[];
+}
+
 /* ---------- Campaigns ---------- */
 
 export type CampaignStatus = "draft" | "running" | "paused" | "completed" | "archived";
