@@ -88,9 +88,21 @@
   scrollbar-color: var(--nav-line) var(--nav-bg);
   scrollbar-width: thin;
 }
+.group { flex-shrink: 0; }
 .group + .group { margin-top: 24px; }
 .groupLabel {
-  padding: 0 8px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
   font-family: var(--font-code);
   font-size: 11px;
   line-height: 16px;
@@ -98,6 +110,18 @@
   letter-spacing: 1.5px;
   text-transform: uppercase;
   color: var(--nav-muted);
+}
+.groupLabel:hover { background: #182f67; color: #fff; }
+.groupLabel:focus-visible { outline: 2px solid var(--nav-highlight); outline-offset: 2px; }
+.groupLabel .badge { letter-spacing: normal; }
+.chevron { margin-left: auto; flex-shrink: 0; transition: transform 150ms ease; }
+.groupLabel[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+.currentDot { width: 5px; height: 5px; border-radius: 50%; background: var(--nav-highlight); flex-shrink: 0; }
+.groupPanel { overflow: hidden; margin-inline: -12px; transition: height 150ms ease; }
+.groupList { list-style: none; margin: 0; padding: 0 12px; }
+.search, .sample, .profile { flex-shrink: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .groupPanel, .chevron { transition: none; }
 }
 .sidebar .item {
   position: relative;

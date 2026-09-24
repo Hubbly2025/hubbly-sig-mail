@@ -44,6 +44,51 @@ function IconCheckInbox() {
   );
 }
 
+const defaultSidebarGroups: Record<string, boolean> = {
+  workspace: false,
+  outreach: true,
+  signal: false,
+  agency: false,
+  settings: false,
+};
+
+function SidebarGroup({ label, open, active, count, onToggle, children }: {
+  label: string;
+  open: boolean;
+  active: boolean;
+  count?: number;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  const listRef = useRef<HTMLUListElement>(null);
+  const [height, setHeight] = useState<number>();
+  const id = `sidebar-group-${label.toLowerCase()}`;
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const measure = () => setHeight(list.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div className={cx(styles.group, label === "Settings" && styles.settings)}>
+      <button type="button" id={`${id}-header`} className={styles.groupLabel} aria-expanded={open} aria-controls={id} onClick={onToggle}>
+        <span>{label}</span>
+        {!open && !!count && <span className={styles.badge} aria-label={`${count} pending approvals`}>{count}</span>}
+        {!open && active && <><span className={styles.currentDot} aria-hidden="true" /><span className="sr-only">Contains current page</span></>}
+        <svg className={styles.chevron} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
+      </button>
+      <div className={styles.groupPanel} style={{ height: open ? height ?? "auto" : 0 }} inert={!open} aria-hidden={!open}>
+        <ul ref={listRef} id={id} className={styles.groupList} aria-labelledby={`${id}-header`}>{children}</ul>
+      </div>
+    </div>
+  );
+}
+
 function Sidebar({ status }: { status: OutreachStatus | undefined }) {
   const pathname = usePathname();
   const brand = brandInfo[BRAND];
@@ -94,6 +139,38 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
       { href: "/settings", label: "Outreach settings", icon: <IconGear /> },
     ] },
   ];
+  const isCurrentPage = (href: string | null) => href !== null && (pathname === href || pathname.startsWith(`${href}/`));
+  const activeGroup = groups.find((group) => group.items.some((item) => isCurrentPage(item.href)))?.label.toLowerCase();
+  const [openGroups, setOpenGroups] = useState(() => ({ ...defaultSidebarGroups, ...(activeGroup ? { [activeGroup]: true } : {}) }));
+
+  useEffect(() => {
+    let next = { ...defaultSidebarGroups };
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem("sidebar-groups") ?? "null");
+      if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+        for (const key of Object.keys(next)) {
+          const value = (saved as Record<string, unknown>)[key];
+          if (typeof value === "boolean") next[key] = value;
+        }
+      }
+    } catch {
+      next = { ...defaultSidebarGroups };
+    }
+    if (activeGroup) next[activeGroup] = true;
+    setOpenGroups(next);
+  }, [pathname, activeGroup]);
+
+  function toggleGroup(label: string, open: boolean) {
+    const next = { ...openGroups, [label.toLowerCase()]: !open };
+    setQuery("");
+    setOpenGroups(next);
+    try {
+      localStorage.setItem("sidebar-groups", JSON.stringify(next));
+    } catch {
+      // Keep this session usable when storage is unavailable; loading uses defaults.
+    }
+  }
+
   const filtered = groups.map((group) => ({
     ...group,
     items: group.items.filter((item) => item.href !== null && item.label.toLowerCase().includes(query.trim().toLowerCase())),
@@ -111,22 +188,28 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
         <kbd aria-hidden="true">⌘K</kbd>
       </div>
       <div className={styles.navigation}>
-        {filtered.map((group) => group.items.length > 0 && (
-          <div key={group.label} className={cx(styles.group, group.label === "Settings" && styles.settings)}>
-            <div className={styles.groupLabel}>{group.label}</div>
-            {group.items.map((item) => {
-              if (item.href === null) return null;
-              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-              const content = <>{item.icon}<span className={styles.itemLabel}>{item.label}</span>{locked && group.label === "Outreach" ? <IconLock size={14} /> : "badge" in item && !!item.badge ? <span className={styles.badge}>{item.badge}</span> : null}</>;
-              const className = cx(styles.item, active && styles.active);
-              return "host" in item ? (
-                <a key={item.href} href={item.href} className={className} aria-current={active ? "page" : undefined}>{content}</a>
-              ) : (
-                <Link key={item.href} href={item.href} className={className} aria-current={active ? "page" : undefined} onClick={() => setQuery("")}>{content}</Link>
-              );
-            })}
-          </div>
-        ))}
+        {filtered.map((group) => {
+          if (!group.items.length) return null;
+          const open = openGroups[group.label.toLowerCase()] || !!query.trim();
+          return (
+            <SidebarGroup key={group.label} label={group.label} open={open}
+              active={activeGroup === group.label.toLowerCase()}
+              count={group.label === "Outreach" && !locked ? badge.data?.count : undefined}
+              onToggle={() => toggleGroup(group.label, open)}>
+              {group.items.map((item) => {
+                if (item.href === null) return null;
+                const active = isCurrentPage(item.href);
+                const content = <>{item.icon}<span className={styles.itemLabel}>{item.label}</span>{locked && group.label === "Outreach" ? <IconLock size={14} /> : "badge" in item && !!item.badge ? <span className={styles.badge}>{item.badge}</span> : null}</>;
+                const className = cx(styles.item, active && styles.active);
+                return <li key={item.href}>{"host" in item ? (
+                  <a href={item.href} className={className} aria-current={active ? "page" : undefined}>{content}</a>
+                ) : (
+                  <Link href={item.href} className={className} aria-current={active ? "page" : undefined} onClick={() => setQuery("")}>{content}</Link>
+                )}</li>;
+              })}
+            </SidebarGroup>
+          );
+        })}
         {!filtered.some((group) => group.items.length) && <p role="status" className={styles.empty}>No matching pages.</p>}
       </div>
       {MOCK && <div className={styles.sample}>Sample data — not connected</div>}
