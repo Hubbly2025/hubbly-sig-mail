@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-ui: Arial, Helvetica, sans-serif;
   --font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   /* Older preview styles may still reference the removed font-loader variables. */
   --font-geist-sans: var(--font-ui);
