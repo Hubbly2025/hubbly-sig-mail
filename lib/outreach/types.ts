@@ -32,11 +32,24 @@ export interface MailOverview {
 }
 
 export type Verification = "valid" | "catch_all_verified" | "risky" | "invalid" | "duplicate";
+export type LeadSource = "identified" | "imported" | "crm";
+export interface ListFilter {
+  source: LeadSource | "all";
+  visited_page: string;
+  min_visits: number;
+  business_only: boolean;
+}
 export interface LeadList {
+  kind?: "saved_filter" | "static";
+  filter?: ListFilter;
+  lead_ids?: string[];
+  used_in_campaigns?: number;
+  updated_at?: string;
   id: string; name: string; source: "signal" | "clickrabbit" | "csv"; is_live: boolean; meta: string; count: number;
   verification: Record<Verification, number> & { ready_to_send: number };
 }
 export interface ListLead {
+  source?: LeadSource;
   id: string; name: string; company: string | null; email: string; email_type: "business" | "personal";
   verification: Verification; reason: string; last_activity: string;
 }
@@ -46,7 +59,12 @@ export interface Domain {
   spf: boolean; dkim: boolean; dmarc: boolean; reputation: "good" | "building" | "poor";
   daily_limit: number; daily_limit_after_warmup: number | null;
   fix: { record: string; type: string; host: string; value: string } | null;
-}
+  records?: { record: string; type: string; host: string; value: string }[];
+  }
+  export interface BookedMeeting {
+  id: string; lead: string; company: string; campaign_id: string; campaign_name: string;
+  starts_at: string; source: "booking_link" | "calendar"; status: "upcoming" | "held" | "no_show";
+  }
 export interface Pipeline {
   goal: { label: string; target: number; current: number };
   open_value_monthly: number; won_value_monthly: number; won_count: number; assignees: string[];
@@ -57,9 +75,23 @@ export interface Pipeline {
 
 /* ---------- Campaigns ---------- */
 
+export type CampaignType = "cold_outreach" | "reactivation";
+export interface SendingConfig {
+  pool_mode: "manual" | "tag";
+  mailbox_ids: string[];
+  mailbox_tag: string;
+  per_mailbox_cap: number;
+  mailbox_caps: Record<string, number>;
+  daily_cap: number;
+  target_days: number;
+  timezone: "lead";
+}
+export interface EmailVariant { id: "A" | "B"; subject: string; body: string }
 export type CampaignStatus = "draft" | "running" | "paused" | "completed" | "archived";
 
 export interface CampaignSummary {
+  type?: CampaignType;
+  pause_reason?: "bounces_over_5" | "canary_failed" | "manual";
   id: string;
   name: string;
   status: CampaignStatus;
@@ -75,8 +107,12 @@ export type BuildMode = "manual" | "ai";
 export type Region = "us" | "us_ca" | "anywhere";
 
 export interface AudienceFilter {
+  stage?: string;
+  inactive_days?: number;
+  closed_lost_reason?: string;
   /** CONFIRM: the filter fields the backend supports. */
-  source: "all_leads" | "signal_visitors";
+  source: "all_leads" | "signal_visitors" | "lead_list";
+  list_id?: string;
   visited_page: string;
   min_visits: number;
   email_type: "business" | "any";
@@ -104,6 +140,8 @@ export interface LintReport {
 }
 
 export interface Step {
+  variants?: EmailVariant[];
+  delay_days?: number;
   n: number;
   subject: string;
   body: string;
@@ -122,6 +160,9 @@ export interface ChecklistItem {
 }
 
 export interface Campaign {
+  type?: CampaignType;
+  pause_reason?: CampaignSummary["pause_reason"];
+  sending?: SendingConfig;
   id: string;
   name: string;
   status: CampaignStatus;
@@ -198,7 +239,10 @@ export interface EmailPreview {
 export type MailboxStatus = "provisioning" | "verifying" | "warming" | "ready" | "paused" | "burnt";
 export type MailboxKind = "managed" | "google" | "microsoft" | "imported";
 
-export interface Mailbox {
+  export interface Mailbox {
+  pause_reason?: "bounces_over_3" | "spam_complaint" | "manual";
+  resume_status?: "ready" | "warming";
+  tags?: string[];
   id: string;
   address: string;
   kind: MailboxKind;

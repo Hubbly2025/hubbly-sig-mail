@@ -114,6 +114,10 @@
 .groupLabel:hover { background: #182f67; color: #fff; }
 .groupLabel:focus-visible { outline: 2px solid var(--nav-highlight); outline-offset: 2px; }
 .groupLabel .badge { letter-spacing: normal; }
+.groupLabel[aria-disabled="true"] { cursor: default; }
+.headerBadge { display: inline-flex; align-items: center; }
+.headerBadge:empty { display: none; }
+.attentionDot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--warning, #f3ce8a); }
 .chevron { margin-left: auto; flex-shrink: 0; transition: transform 150ms ease; }
 .groupLabel[aria-expanded="true"] .chevron { transform: rotate(90deg); }
 .currentDot { width: 5px; height: 5px; border-radius: 50%; background: var(--nav-highlight); flex-shrink: 0; }

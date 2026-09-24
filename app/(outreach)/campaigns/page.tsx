@@ -1,15 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { NewCampaignDialog } from "@/components/campaign/NewCampaignDialog";
+import { campaignTypes, pauseReasons } from "@/lib/outreach/campaign-planning";
 import { useMemo, useState } from "react";
 import { Button, StatusPill, cx } from "@/components/ui-hubbly";
 import { SegmentedControl } from "@/components/ui-hubbly/controls";
 import { IconPlus, IconSearch } from "@/components/ui-hubbly/icons";
-import { Dialog, HelpButton, Pager, Panel, Skel, useToast } from "@/components/outreach/feedback";
+import { HelpButton, Pager, Panel, Skel } from "@/components/outreach/feedback";
 import { PageHeader, useCan } from "@/components/outreach/shell";
 import { campaignStatus, n, pct } from "@/components/outreach/format";
-import { api } from "@/lib/outreach/client";
 import { useResource } from "@/lib/outreach/hooks";
 import type { CampaignStatus, CampaignSummary } from "@/lib/outreach/types";
 
@@ -24,8 +24,6 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 export default function CampaignsPage() {
-  const router = useRouter();
-  const toast = useToast();
   const canBuild = useCan("build");
   const list = useResource<CampaignSummary[]>("outreach/campaigns");
   const [q, setQ] = useState("");
@@ -33,8 +31,7 @@ export default function CampaignsPage() {
   const [view, setView] = useState<"cards" | "table">("cards");
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
-  const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
+
 
   // Tab counts are counted within the current search.
   const searched = useMemo(() => {
@@ -55,17 +52,6 @@ export default function CampaignsPage() {
   const running = all.filter((c) => c.status === "running").length;
   const drafts = all.filter((c) => c.status === "draft").length;
 
-  async function create() {
-    if (!name.trim()) return;
-    setBusy(true);
-    try {
-      const c = await api<CampaignSummary>("POST", "outreach/campaigns", { name: name.trim() });
-      router.push(`/campaigns/${c.id}`);
-    } catch (e) {
-      toast("error", (e as Error).message);
-      setBusy(false);
-    }
-  }
 
   return (
     <>
@@ -192,6 +178,8 @@ export default function CampaignsPage() {
                     </div>
                     <StatusPill tone={campaignStatus[c.status].tone}>{campaignStatus[c.status].label}</StatusPill>
                   </div>
+                  {c.status === "paused" && <p className="m-0 rounded-control bg-warn-bg px-3 py-2 text-xs text-warn">{pauseReasons[c.pause_reason ?? "manual"]}</p>}
+                  <span className="text-xs text-muted">{campaignTypes[c.type ?? "cold_outreach"]}</span>
                   <dl className="m-0 grid grid-cols-4 gap-2 pt-3 border-t border-divider">
                     {[
                       ["Enrolled", n(c.enrolled)],
@@ -226,6 +214,7 @@ export default function CampaignsPage() {
                   </div>
                   <div role="cell">
                     <StatusPill tone={campaignStatus[c.status].tone}>{campaignStatus[c.status].label}</StatusPill>
+                    {c.status === "paused" && <div className="mt-1 text-xs text-warn">{pauseReasons[c.pause_reason ?? "manual"]}</div>}
                   </div>
                   <div role="cell" className="text-ink-2 truncate">{c.sender_profile_name ?? "—"}</div>
                   <div role="cell" className="text-right tabular">{n(c.enrolled)}</div>
@@ -240,33 +229,7 @@ export default function CampaignsPage() {
         </Panel>
       </div>
 
-      <Dialog
-        open={creating}
-        onClose={() => setCreating(false)}
-        title="New campaign"
-        width={440}
-        footer={
-          <>
-            <Button onClick={() => setCreating(false)}>Cancel</Button>
-            <Button variant="primary" disabled={!name.trim() || busy} onClick={create}>
-              {busy ? "Creating…" : "Create draft"}
-            </Button>
-          </>
-        }
-      >
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            create();
-          }}
-        >
-          <label className="flex flex-col gap-1.5 text-meta text-muted">
-            Name
-            <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Pricing-page visitors — October" className="min-h-10 px-3 rounded-control border border-control text-sm text-ink" />
-          </label>
-          <p className="m-0 mt-2 text-meta text-muted">It saves as a draft straight away. Nothing sends until you launch it.</p>
-        </form>
-      </Dialog>
+      {creating && <NewCampaignDialog onClose={() => setCreating(false)} />}
     </>
   );
 }

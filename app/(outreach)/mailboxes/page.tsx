@@ -21,6 +21,9 @@ function MailboxCard({ m, onChanged }: { m: Mailbox; onChanged: () => void }) {
   const toast = useToast();
   const canManage = useCan("manage_mailboxes");
   const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const autoPaused = m.status === "paused" && (m.pause_reason === "bounces_over_3" || m.pause_reason === "spam_complaint");
+  const pauseReason = m.pause_reason === "bounces_over_3" ? "Bounces over 3%" : m.pause_reason === "spam_complaint" ? "Spam complaint" : null;
   const st = mailboxStatus[m.status];
   const w = m.warmup;
   return (
@@ -31,7 +34,7 @@ function MailboxCard({ m, onChanged }: { m: Mailbox; onChanged: () => void }) {
           <div className="text-meta text-muted">{mailboxKind[m.kind]}</div>
         </div>
         <StatusPill tone={st.tone}>
-          <span title={st.help}>{st.label}</span>
+          <span title={st.help}>{autoPaused ? "Auto-paused" : st.label}</span>
         </StatusPill>
       </div>
       {m.status === "warming" && w ? (
@@ -47,19 +50,23 @@ function MailboxCard({ m, onChanged }: { m: Mailbox; onChanged: () => void }) {
       ) : m.status === "ready" ? (
         <div className="text-meta text-muted">Sends up to {w?.per_day_target ?? 30} a day</div>
       ) : (
-        <div className="text-meta text-muted">{m.note ?? st.help}</div>
+        <div className="text-meta text-muted">{autoPaused ? <><span className="font-medium text-ink">{pauseReason}.</span> Review sending health before resuming.</> : m.note ?? st.help}</div>
       )}
       {canManage && m.status !== "burnt" && m.status !== "provisioning" && m.status !== "verifying" && (
         <div className="flex gap-2 pt-2 border-t border-divider">
           <Button
             small
+            disabled={busy}
             onClick={async () => {
+              setBusy(true);
               try {
                 await api("POST", `outreach/mailboxes/${m.id}/pause`);
                 toast("success", m.status === "paused" ? "Back in rotation." : "Taken out of rotation.");
-                onChanged();
+                await onChanged();
               } catch (e) {
                 toast("error", (e as Error).message);
+              } finally {
+                setBusy(false);
               }
             }}
           >
@@ -249,8 +256,8 @@ function AddMailboxes({ open, onClose, room, onDone }: { open: boolean; onClose:
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Hubbly" className="min-h-10 px-3 rounded-control border border-control text-sm text-ink" />
             </label>
             <label className="flex flex-col gap-1.5 text-meta text-muted">
-              How many mailboxes
-              <input type="number" min={1} max={Math.max(1, room)} value={count} onChange={(e) => setCount(Number(e.target.value))} className="min-h-10 px-3 rounded-control border border-control text-sm text-ink w-28" />
+              How many mailboxes (max 3 per domain)
+              <input type="number" min={1} max={Math.max(1, Math.min(3, room))} value={count} onChange={(e) => setCount(Number(e.target.value))} className="min-h-10 px-3 rounded-control border border-control text-sm text-ink w-28" />
             </label>
             <div className="flex justify-end">
               <Button variant="primary" disabled={busy || !name.trim() || room < 1} onClick={() => run(() => api<{ created: number; domain: string }>("POST", "outreach/mailboxes/managed", { name, count }), (r) => `Setting up ${r.created} mailbox${r.created === 1 ? "" : "es"} on ${r.domain}.`)}>
@@ -360,13 +367,14 @@ export default function MailboxesPage() {
   const canManage = useCan("manage_mailboxes");
   const r = useResource<MailboxesResponse>("outreach/mailboxes", { every: 30_000 });
   const [adding, setAdding] = useState(false);
+  const [target, setTarget] = useState(500);
   const d = r.data;
 
   const stats = useMemo(() => {
     if (!d) return null;
     const live = d.mailboxes.filter((m) => m.status !== "burnt");
     const ready = d.mailboxes.filter((m) => m.status === "ready");
-    const today = d.mailboxes.reduce((a, m) => a + (m.status === "ready" || m.status === "warming" ? m.warmup?.per_day_now ?? 0 : 0), 0);
+    const today = d.mailboxes.reduce((a, m) => a + (m.status === "ready" ? m.warmup?.per_day_target ?? d.limits.per_mailbox_daily : m.status === "warming" ? m.warmup?.per_day_now ?? 0 : 0), 0);
     return { total: live.length, ready: ready.length, today, room: d.limits.max_mailboxes - live.length };
   }, [d]);
 
@@ -414,7 +422,16 @@ export default function MailboxesPage() {
           </>
         }
       />
-      <div className="px-8 py-6 flex flex-col gap-4">
+      <div className="px-4 md:px-8 py-6 flex flex-col gap-4">
+        {stats && d && <section aria-label="Sending capacity" className="rounded-card border border-line bg-surface p-5 flex flex-wrap items-center gap-5">
+          <div className="flex-1 min-w-0">
+            <h2 className="m-0 text-base font-semibold" aria-live="polite">You can send about {stats.today.toLocaleString("en-US")} a day. To reach {target.toLocaleString("en-US")} a day, add {Math.max(0, Math.ceil((target - stats.today) / d.limits.per_mailbox_daily))} mailboxes.</h2>
+            <p className="mt-2 mb-0 text-meta text-muted">Based on today&apos;s warmup limits. New mailboxes add up to {d.limits.per_mailbox_daily} a day each after warmup; paused mailboxes do not count.</p>
+            {Math.ceil((target - stats.today) / d.limits.per_mailbox_daily) > stats.room && <p className="mt-2 mb-0 text-meta text-muted">Your plan has room for {stats.room} more. This target needs a higher mailbox allowance.</p>}
+          </div>
+          <label className="flex flex-col gap-1 text-meta text-muted">Daily target<input type="number" min={0} max={100000} step={10} value={target} onChange={(e) => setTarget(Math.min(100000, Math.max(0, Math.floor(Number(e.target.value) || 0))))} className="w-28 min-h-10 px-3 rounded-control border border-control bg-surface text-ink" /></label>
+          {canManage && <Button onClick={() => setAdding(true)} disabled={stats.room < 1}>Add mailboxes</Button>}
+        </section>}
         {d?.domains_pending.map((x) => (
           <DomainPanel key={x.id} d={x} onChanged={r.reload} />
         ))}
@@ -427,7 +444,7 @@ export default function MailboxesPage() {
           emptyText="No mailboxes yet. Campaigns can't send until at least one is ready."
           emptyAction={canManage ? <Button variant="primary" onClick={() => setAdding(true)}>Add mailboxes</Button> : undefined}
           skeleton={
-            <div className="grid grid-cols-3 gap-4 p-5">
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 p-5">
               {Array.from({ length: 6 }, (_, i) => (
                 <Skel key={i} className="h-[130px] rounded-card" />
               ))}
@@ -435,7 +452,7 @@ export default function MailboxesPage() {
           }
           actions={d && <span className="text-meta text-muted">{d.limits.max_mailboxes} allowed on your plan · up to {d.limits.per_mailbox_daily} a day each</span>}
         >
-          <div className="grid grid-cols-3 gap-4 p-5 pt-1">
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 p-5 pt-1">
             {d?.mailboxes.map((m) => (
               <MailboxCard key={m.id} m={m} onChanged={r.reload} />
             ))}

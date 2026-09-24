@@ -3,10 +3,12 @@
 // Delete nothing here when going live — flip NEXT_PUBLIC_OUTREACH_MOCK=0.
 
 import { lintEmail } from "./lint";
+import { capacityPlan, defaultSending, sendingConfig, sendingError, stepVariants } from "./campaign-planning";
 import { presetTime, localDateTime, toInstant } from "./message-time";
 import type { Availability, AvailabilitySlot, CalendarConnectUrl, CalendarProvider, WorkingHours, MessageInput, MessageResult, ScheduledMessage } from "./types";
-import { sampleLists, sampleListLeads } from "./list-samples";
-import { sampleDomains } from "./domain-samples";
+import { sampleLists } from "./list-samples";
+  import { sampleDomains } from "./domain-samples";
+  import { sampleMeetings } from "./meeting-samples";
 import { samplePipeline } from "./pipeline-samples";
 import type {
   AudienceFilter,
@@ -162,6 +164,8 @@ const pricingSteps: Step[] = [
 
 function baseCampaign(p: Partial<Campaign> & Pick<Campaign, "id" | "name" | "status">): Campaign {
   return {
+    type: "cold_outreach",
+    sending: clone(defaultSending),
     build_mode: "manual",
     brief: {
       offer: "Hubbly identifies the companies and people visiting your website and follows up with them for you.",
@@ -194,6 +198,7 @@ const campaigns: Campaign[] = [
     id: "c_print",
     name: "Print houses — referral channel",
     status: "paused",
+    pause_reason: "bounces_over_5",
     steps: clone(pricingSteps).slice(0, 2).map((s) => ({ ...s, sent: Math.round(s.sent / 2.4), reached: Math.round(s.reached / 2.4) })),
     schedule: { sender_profile_id: "sp_paul", days: [1, 2, 3], window: { start: "09:00", end: "12:00" } },
     enrolled_count: 1188,
@@ -201,12 +206,14 @@ const campaigns: Campaign[] = [
   baseCampaign({
     id: "c_returning",
     name: "Returning visitors — no demo booked",
-    status: "running",
+    status: "paused",
+    type: "reactivation",
+    pause_reason: "canary_failed",
     steps: clone(pricingSteps).slice(0, 2).map((s) => ({ ...s, sent: Math.round(s.sent / 5.5), reached: Math.round(s.reached / 5.5) })),
     audience: { filter: { source: "signal_visitors", visited_page: "", min_visits: 3, email_type: "business" }, region: "us", region_reason: "" },
     enrolled_count: 388,
   }),
-  baseCampaign({ id: "c_reactivation", name: "Q4 reactivation — past trials", status: "draft", build_mode: null, steps: [], schedule: { sender_profile_id: null, days: [0, 1, 2, 3, 4], window: { start: "09:00", end: "16:00" } } }),
+  baseCampaign({ id: "c_reactivation", name: "Q4 reactivation — past trials", type: "reactivation", audience: { filter: { source: "all_leads", visited_page: "", min_visits: 0, email_type: "business", inactive_days: 30 }, region: "us", region_reason: "" }, status: "draft", build_mode: null, steps: [], schedule: { sender_profile_id: null, days: [0, 1, 2, 3, 4], window: { start: "09:00", end: "16:00" } } }),
   baseCampaign({ id: "c_webinar", name: "Webinar no-shows — August", status: "completed", steps: clone(pricingSteps).slice(0, 2), enrolled_count: 212 }),
   baseCampaign({ id: "c_q2", name: "Q2 home services test", status: "archived", steps: clone(pricingSteps).slice(0, 1), enrolled_count: 600 }),
 ];
@@ -227,6 +234,16 @@ const LAST = ["Ortiz", "Hale", "Nair", "Becker", "Wu", "Tran", "Mendel", "Lowe",
 const CO = ["Brightline Dental", "Northpoint Roofing", "Lumen Studio", "Becker Print Co.", "Peak Plumbing", "Mendel Law Group", "Lowe Realty", "Castillo Auto", "Summit HVAC", "Atlas Windows", "Harbor Fitness", "Crestview Dental", "Lone Star Motors", "Cedar Creek Vet", "Bluebonnet Builders"];
 
 interface Lead {
+  stage?: string;
+  last_activity?: string;
+  last_contact_date?: string;
+  last_deal?: string;
+  owner_name?: string;
+  closed_lost_reason?: string;
+  timezone?: string;
+  source: import("./types").LeadSource;
+  visited_pages: string[];
+  visits: number;
   id: string;
   name: string;
   company: string | null;
@@ -246,6 +263,16 @@ const leads: Lead[] = Array.from({ length: 180 }, (_, i) => {
   const dom = company ? company.toLowerCase().replace(/[^a-z]/g, "").slice(0, 16) + ".com" : pick(["gmail.com", "yahoo.com", "outlook.com"]);
   return {
     id: `lead_${i}`,
+    stage: ["new", "qualified", "proposal", "closed_lost", "customer"][i % 5],
+    last_activity: new Date(Date.now() - (i % 150 + 1) * 86400000).toISOString(),
+    last_contact_date: new Date(Date.now() - (i % 150 + 1) * 86400000).toISOString().slice(0, 10),
+    last_deal: `${company ?? "Team"} · website visitor pilot`,
+    owner_name: i % 2 ? "Paul" : "Vince R.",
+    closed_lost_reason: i % 5 === 3 ? ["budget", "timing", "competitor", "no_response"][i % 4] : "",
+    timezone: i % 31 === 0 ? "" : "America/Chicago",
+    source: (["identified", "imported", "crm"] as const)[i % 3],
+    visited_pages: i % 2 === 0 ? ["/pricing", "/"] : ["/demo", "/"],
+    visits: i % 8 + 1,
     name: `${f} ${l}`,
     company,
     email: `${f.toLowerCase()}${personal ? "." + l.toLowerCase() : ""}@${dom}`,
@@ -257,8 +284,42 @@ const leads: Lead[] = Array.from({ length: 180 }, (_, i) => {
   };
 });
 
+function matchesList(lead: Lead, filter: import("./types").ListFilter) {
+  return (filter.source === "all" || lead.source === filter.source) &&
+    (!filter.visited_page || lead.visited_pages.some((page) => page.includes(filter.visited_page))) &&
+    lead.visits >= filter.min_visits && (!filter.business_only || lead.email_type === "business");
+}
+function listMembers(list: import("./types").LeadList) {
+  return list.kind === "saved_filter" && list.filter ? leads.filter((lead) => matchesList(lead, list.filter!)) : leads.filter((lead) => list.lead_ids?.includes(lead.id));
+}
+function listRow(lead: Lead): import("./types").ListLead {
+  return { id: lead.id, name: lead.name, company: lead.company, email: lead.email, email_type: lead.email_type, source: lead.source,
+    verification: lead.mailbox_ok ? "valid" : "invalid", reason: lead.mailbox_ok ? "Mailbox verified" : "Mailbox does not exist", last_activity: "Sep 23, 2026" };
+}
+function describeList(list: import("./types").LeadList) {
+  const rows = listMembers(list).map(listRow);
+  return { ...list, count: rows.length, used_in_campaigns: campaigns.filter((campaign) => campaign.audience.filter.source === "lead_list" && campaign.audience.filter.list_id === list.id).length,
+    verification: { valid: rows.filter((row) => row.verification === "valid").length, invalid: rows.filter((row) => row.verification === "invalid").length, risky: 0, duplicate: 0, catch_all_verified: 0, ready_to_send: rows.filter((row) => row.verification === "valid").length } };
+}
+sampleLists.forEach((list, index) => {
+  list.kind = list.is_live ? "saved_filter" : "static";
+  list.filter = { source: "identified", visited_page: list.id === "l_pricing" ? "/pricing" : "", min_visits: list.id === "l_returning" ? 3 : 0, business_only: true };
+  list.lead_ids = leads.filter((lead, i) => lead.source !== "identified" && i % 5 === index).map((lead) => lead.id);
+  list.updated_at = "Sep 23, 2026";
+});
+function audienceMembers(filter: AudienceFilter) {
+  const list = filter.source === "lead_list" ? sampleLists.find((item) => item.id === filter.list_id) : undefined;
+  const pool = filter.source === "lead_list" ? list ? listMembers(list) : [] : leads;
+  return pool.filter((lead) => (filter.source !== "signal_visitors" || lead.source === "identified") &&
+    (!filter.visited_page || lead.visited_pages.some((page) => page.includes(filter.visited_page))) && lead.visits >= filter.min_visits &&
+    (!filter.stage || lead.stage === filter.stage) &&
+    (!filter.inactive_days || (!!lead.last_activity && Date.parse(lead.last_activity) < Date.now() - filter.inactive_days * 86400000)) &&
+    (!filter.closed_lost_reason || (lead.stage === "closed_lost" && lead.closed_lost_reason === filter.closed_lost_reason)));
+}
+
 function heldReason(ld: Lead, filter: AudienceFilter, region: Region): string | null {
   if (ld.suppressed) return "On the opt-out list";
+  if (!ld.timezone) return "Lead time zone unknown";
   if (!ld.mailbox_ok) return "Mailbox doesn't exist";
   if (filter.email_type === "business" && ld.email_type === "personal") return "Personal email address";
   if (region === "us" && ld.country !== "US") return "Outside the region";
@@ -283,6 +344,7 @@ function mb(address: string, kind: Mailbox["kind"], st: Mailbox["status"], day =
   const ramp = day >= 35 ? 30 : day >= 28 ? 20 : day >= 21 ? 10 : day >= 14 ? 5 : 0;
   return {
     id: nid("mb"),
+    tags: kind === "managed" ? ["outreach", "reactivation"] : ["outreach"],
     address,
     kind,
     status: st,
@@ -296,11 +358,11 @@ const mailboxes: Mailbox[] = [
   mb("vince@hubblyhq.com", "managed", "ready"),
   mb("paul@hubblyhq.com", "managed", "ready"),
   mb("team@hubblyhq.com", "managed", "ready"),
-  mb("hello@hubblyhq.com", "managed", "ready"),
+  { ...mb("hello@meethubbly.com", "managed", "paused", 35, "Spam complaint"), pause_reason: "spam_complaint", resume_status: "ready" },
   mb("vince@tryhubbly.com", "google", "ready"),
   mb("paul@tryhubbly.com", "google", "ready"),
   mb("team@tryhubbly.com", "google", "ready"),
-  mb("hi@tryhubbly.com", "google", "paused", 35, "Bounce rate above 3% yesterday — resting for 48 hours"),
+  { ...mb("hi@meethubbly.com", "google", "paused", 35, "Bounces over 3%"), pause_reason: "bounces_over_3", resume_status: "ready" },
   mb("vince@gethubbly.co", "imported", "warming", 23),
   mb("paul@gethubbly.co", "imported", "warming", 23),
   mb("team@gethubbly.co", "imported", "warming", 16),
@@ -320,7 +382,12 @@ const pendingDomains: MailboxesResponse["domains_pending"] = [
   },
 ];
 
-const limits = { max_mailboxes: 20, per_mailbox_daily: 30 };
+  function registerSendingDomain(name: string, origin: "managed" | "own") {
+    if (sampleDomains.some((domain) => domain.name === name)) return;
+    sampleDomains.push({ id: nid("domain"), name, origin, connected_at: new Date().toISOString().slice(0, 10), mailboxes: 0, status: "needs_fix", warmup_day: null, spf: false, dkim: false, dmarc: false, reputation: "building", daily_limit: 0, daily_limit_after_warmup: null, fix: null, records: [] });
+  }
+  const limits = { max_mailboxes: 20, per_mailbox_daily: 30 };
+campaigns.forEach((campaign) => { campaign.sending = { ...clone(defaultSending), mailbox_ids: mailboxes.filter((mailbox) => mailbox.status === "ready").map((mailbox) => mailbox.id) }; });
 const provisioningStartedAt = new Map<string, number>();
 
 /* ---- inbox ---- */
@@ -606,24 +673,42 @@ const scheduled: ScheduledMessage[] = inbox.slice(0, 2).map((row) => ({
 
 /* ---------- derived ---------- */
 
+function normalizeSteps(input: Step[], campaign: Campaign): Step[] {
+  if (!Array.isArray(input) || input.length > 4) throw new MockError(422, "A campaign can have up to four emails.");
+  if (input.length < campaign.steps.length && campaign.steps.some((step) => step.sent > 0 || step.reached > 0)) throw new MockError(409, "Sent sequence steps cannot be removed.");
+  return input.map((item, index) => {
+    const n = index + 1;
+    const previous = campaign.steps.find((step) => step.n === n);
+    const variants = stepVariants(item);
+    if (variants.length < 1 || variants.length > 2 || variants.some((variant, i) => variant.id !== (i === 0 ? "A" : "B") || typeof variant.subject !== "string" || typeof variant.body !== "string")) throw new MockError(422, "Each email needs variant A and optionally variant B.");
+    const delay = index === 0 ? 0 : item.delay_days ?? 2;
+    if (!Number.isInteger(delay) || delay < (index === 0 ? 0 : 1) || delay > 90) throw new MockError(422, "Follow-up delays must be 1–90 whole days.");
+    const unchanged = previous && JSON.stringify(stepVariants(previous)) === JSON.stringify(variants) && (previous.delay_days ?? (n === 1 ? 0 : 2)) === delay;
+    return { n, variants: clone(variants), delay_days: delay, subject: variants[0].subject, body: variants[0].body, lint: lintEmail(variants[0].subject, variants[0].body, n === 1), approved: unchanged ? previous.approved : false, approved_over: unchanged ? previous.approved_over : [], sent: previous?.sent ?? 0, reached: previous?.reached ?? 0 };
+  });
+}
+
 function checklist(c: Campaign): ChecklistItem[] {
   const profile = profiles.find((p) => p.id === c.schedule.sender_profile_id);
   return [
     { key: "audience", label: "Leads enrolled", done: c.enrolled_count > 0 },
     { key: "emails", label: "At least one email written", done: c.steps.length > 0 },
-    { key: "approved", label: "Every email approved", done: c.steps.length > 0 && c.steps.every((s) => s.approved) },
+    { key: "approved", label: "Every variant written and approved", done: c.steps.length > 0 && c.steps.every((s) => s.approved && stepVariants(s).every((v) => !!v.subject.trim() && !!v.body.trim())) },
     { key: "sender", label: "Sender profile chosen", done: !!profile },
     { key: "address", label: "Sender has a postal address", done: !!profile?.postal_address },
-    { key: "schedule", label: "Sending days and hours set", done: c.schedule.days.length > 0 },
-    { key: "mailboxes", label: "At least one mailbox ready", done: mailboxes.some((m) => m.status === "ready") },
+    { key: "schedule", label: "Sending limits, days and hours set", done: !sendingError(sendingConfig(c), c.schedule) },
+    { key: "mailboxes", label: "Ready mailbox pool selected", done: capacityPlan(c, mailboxes).selected > 0 },
+    { key: "capacity", label: "Capacity plan fits the window", done: capacityPlan(c, mailboxes).fits },
+    { key: "region", label: "Region policy recorded", done: c.audience.region !== "anywhere" || !!c.audience.region_reason.trim() },
   ];
 }
 
 function full(c: Campaign): Campaign {
   const out = clone(c);
   out.checklist = checklist(c);
-  out.ready_mailboxes = mailboxes.filter((m) => m.status === "ready").length;
-  out.daily_capacity = out.ready_mailboxes * limits.per_mailbox_daily;
+  const plan = capacityPlan(c, mailboxes, limits.per_mailbox_daily);
+  out.ready_mailboxes = plan.selected;
+  out.daily_capacity = plan.dailyCapacity;
   return out;
 }
 
@@ -633,6 +718,8 @@ function summary(c: Campaign): CampaignSummary {
     id: c.id,
     name: c.name,
     status: c.status,
+    type: c.type ?? "cold_outreach",
+    pause_reason: c.pause_reason,
     sender_profile_name: profiles.find((p) => p.id === c.schedule.sender_profile_id)?.name ?? null,
     enrolled: c.enrolled_count,
     sent: st.sent,
@@ -641,12 +728,12 @@ function summary(c: Campaign): CampaignSummary {
   };
 }
 
-function preview(filter: AudienceFilter, region: Region): AudiencePreview {
-  const k = scaleFor(filter);
+function preview(filter: AudienceFilter, region: Region, enrolled = new Set<string>()): AudiencePreview {
+  const k = 1;
   const reasons = new Map<string, number>();
   let ok = 0;
-  leads.forEach((ld) => {
-    const r = heldReason(ld, filter, region);
+  audienceMembers(filter).forEach((ld) => {
+    const r = enrolled.has(ld.id) ? "Already enrolled in this campaign" : heldReason(ld, filter, region);
     if (r) reasons.set(r, (reasons.get(r) ?? 0) + 1);
     else ok++;
   });
@@ -655,12 +742,15 @@ function preview(filter: AudienceFilter, region: Region): AudiencePreview {
   return { matched: will + held.reduce((a, b) => a + b.count, 0), will_enroll: will, held_back: held };
 }
 
-function renderVars(t: string, ld: { name: string; company: string | null; email: string }) {
+function renderVars(t: string, ld: { name: string; company: string | null; email: string; last_contact_date?: string; last_deal?: string; owner_name?: string }) {
   const first = ld.name.split(" ")[0];
   return t
     .replace(/\{first_name\}/g, first)
     .replace(/\{company\}/g, ld.company ?? "your team")
     .replace(/\{website\}/g, ld.email.split("@")[1])
+    .replace(/\{last_contact_date\}/g, ld.last_contact_date ?? "our last conversation")
+    .replace(/\{last_deal\}/g, ld.last_deal ?? "your last project")
+    .replace(/\{owner_name\}/g, ld.owner_name ?? "your account team")
     .replace(/\{([^{}|]+)\|[^{}]*\}/g, "$1");
 }
 
@@ -742,25 +832,44 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
     waiting: { replies: 6, drafts: 1 },
   });
 
-  if (M === "GET" && path === "lists") return clone(sampleLists);
+  if (M === "GET" && path === "list-leads") {
+    const search = (q.get("q") ?? "").toLowerCase();
+    return clone(leads.filter((lead) => `${lead.name} ${lead.company} ${lead.email}`.toLowerCase().includes(search)).map(listRow));
+  }
+  if (M === "GET" && path === "lists/preview") {
+    const filter: import("./types").ListFilter = { source: (q.get("source") ?? "all") as import("./types").ListFilter["source"], visited_page: q.get("visited_page") ?? "", min_visits: Number(q.get("min_visits")) || 0, business_only: q.get("business_only") === "true" };
+    return { count: leads.filter((lead) => matchesList(lead, filter)).length };
+  }
+  if (M === "GET" && path === "lists") return clone(sampleLists.map(describeList));
+  if (M === "POST" && path === "lists") {
+    const name = String(b.name ?? "").trim();
+    if (!name || name.length > 80) throw new MockError(422, "Enter a name of 1–80 characters.");
+    if (!["saved_filter", "static"].includes(b.kind)) throw new MockError(422, "Choose a list type.");
+    const filter = b.filter;
+    if (b.kind === "saved_filter" && (!filter || !["identified", "imported", "crm", "all"].includes(filter.source) || typeof filter.visited_page !== "string" || !Number.isInteger(filter.min_visits) || filter.min_visits < 0 || typeof filter.business_only !== "boolean")) throw new MockError(422, "Check your list filters.");
+    if (b.kind === "static" && (!Array.isArray(b.lead_ids) || !b.lead_ids.length || b.lead_ids.some((id: string) => !leads.some((lead) => lead.id === id)))) throw new MockError(422, "Pick at least one available lead.");
+    const list: import("./types").LeadList = { id: nid("list"), name, kind: b.kind, filter: b.kind === "saved_filter" ? clone(filter) : undefined, lead_ids: b.kind === "static" ? [...new Set<string>(b.lead_ids)] : undefined, source: b.kind === "saved_filter" ? "signal" : "csv", is_live: b.kind === "saved_filter", meta: b.kind === "saved_filter" ? "Updates as leads match your filters" : "Manually selected leads", count: 0, verification: { valid: 0, catch_all_verified: 0, risky: 0, invalid: 0, duplicate: 0, ready_to_send: 0 }, updated_at: "Just now" };
+    sampleLists.unshift(list); return clone(describeList(list));
+  }
   if (seg[0] === "lists" && seg[1]) {
     const list = sampleLists.find((item) => item.id === seg[1]);
     if (!list) throw new MockError(404, "This list no longer exists.");
+    if (M === "GET" && seg.length === 2) return clone(describeList(list));
     if (M === "GET" && seg[2] === "leads") {
       const page = Math.max(1, Number(q.get("page")) || 1);
-      const rows = sampleListLeads[list.id];
+      const rows = listMembers(list).map(listRow);
       return clone({ items: rows.slice((page - 1) * 5, page * 5), total: rows.length, page, page_size: 5 });
     }
     if (M === "POST" && seg[2] === "cleanup") {
-      list.count -= list.verification.invalid + list.verification.duplicate;
-      list.verification.invalid = 0;
-      list.verification.duplicate = 0;
-      sampleListLeads[list.id] = sampleListLeads[list.id].filter((lead) => lead.verification !== "invalid" && lead.verification !== "duplicate");
-      return clone(list);
+      if (list.kind === "saved_filter") throw new MockError(422, "Saved filters update automatically. Invalid addresses are held back when enrolling.");
+      list.lead_ids = listMembers(list).filter((lead) => lead.mailbox_ok).map((lead) => lead.id);
+      list.updated_at = "Just now";
+      return clone(describeList(list));
     }
   }
 
-  if (M === "GET" && path === "domains") return clone(sampleDomains);
+  if (M === "GET" && path === "meetings") return clone(sampleMeetings);
+  if (M === "GET" && path === "domains") return clone(sampleDomains.map((domain) => ({ ...domain, mailboxes: mailboxes.filter((mailbox) => mailbox.status !== "burnt" && mailbox.address.split("@")[1] === domain.name).length })));
   if (M === "POST" && seg[0] === "domains" && seg[2] === "check") {
     const domain = sampleDomains.find((item) => item.id === seg[1]);
     if (!domain) throw new MockError(404, "Domain not found.");
@@ -864,7 +973,8 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
       if (M === "POST") {
         const name = String(b.name ?? "").trim();
         if (!name) throw new MockError(422, "Give the campaign a name.");
-        const c = baseCampaign({ id: nid("c"), name, status: "draft", build_mode: null, steps: [], schedule: { sender_profile_id: null, days: [0, 1, 2, 3, 4], window: { start: "09:00", end: "16:00" } } });
+        if (b.type !== "cold_outreach" && b.type !== "reactivation") throw new MockError(422, "Choose Cold outreach or Reactivation.");
+        const c = baseCampaign({ id: nid("c"), name, type: b.type, status: "draft", build_mode: null, steps: [], ...(b.type === "reactivation" ? { audience: { filter: { source: "all_leads", visited_page: "", min_visits: 0, email_type: "business", inactive_days: 30 }, region: "us", region_reason: "" } } : {}), schedule: { sender_profile_id: null, days: [0, 1, 2, 3, 4], window: { start: "09:00", end: "16:00" } } });
         campaigns.unshift(c);
         return summary(c);
       }
@@ -875,33 +985,47 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
       if (M === "PATCH") {
         if (b.name !== undefined) c.name = b.name;
         if (b.build_mode !== undefined) c.build_mode = b.build_mode;
-        if (b.audience) c.audience = { ...c.audience, ...b.audience, filter: { ...c.audience.filter, ...(b.audience.filter ?? {}) } };
-        if (b.schedule) c.schedule = { ...c.schedule, ...b.schedule, window: { ...c.schedule.window, ...(b.schedule.window ?? {}) } };
-        if (b.brief) c.brief = { ...c.brief, ...b.brief };
+        const next = clone(c);
+        if (b.steps) next.steps = normalizeSteps(b.steps, c);
+        if (b.sending) {
+          const sending: import("./types").SendingConfig = { ...sendingConfig(c), ...b.sending };
+          if (!["manual", "tag"].includes(sending.pool_mode) || !Array.isArray(sending.mailbox_ids) || sending.mailbox_ids.some((id) => !mailboxes.some((mailbox) => mailbox.id === id))) throw new MockError(422, "Choose an available mailbox pool.");
+          const error = sendingError(sending, { sender_profile_id: "validate-caps", days: [0], window: { start: "09:00", end: "17:00" } });
+          if (error) throw new MockError(422, error);
+          next.sending = { ...sending, timezone: "lead" };
+        }
+        if (b.audience) {
+          next.audience = { ...c.audience, ...b.audience, filter: { ...c.audience.filter, ...(b.audience.filter ?? {}) } };
+          if (c.status === "draft" && (JSON.stringify(next.audience.filter) !== JSON.stringify(c.audience.filter) || next.audience.region !== c.audience.region)) { next.enrolled_count = 0; enrolledSets[c.id] = new Set(); }
+        }
+        if (b.schedule) next.schedule = { ...c.schedule, ...b.schedule, window: { ...c.schedule.window, ...(b.schedule.window ?? {}) } };
+        if (b.brief) next.brief = { ...c.brief, ...b.brief };
+        Object.assign(c, next);
         return full(c);
       }
     }
     const action = seg[2];
     if (M === "POST" && ["launch", "pause", "resume", "archive"].includes(action)) {
       if (action === "launch") {
+        if (c.status !== "draft") throw new MockError(409, "Only a draft can be launched.");
         const missing = checklist(c).filter((x) => !x.done);
         if (missing.length) throw new MockError(409, `Can't launch yet: ${missing.map((m) => m.label.toLowerCase()).join(", ")}.`);
         c.status = "running";
       }
-      if (action === "pause") c.status = "paused";
-      if (action === "resume") c.status = "running";
+      if (action === "pause") { c.status = "paused"; c.pause_reason = "manual"; }
+      if (action === "resume") { c.status = "running"; c.pause_reason = undefined; }
       if (action === "archive") c.status = "archived";
       return full(c);
     }
     if (action === "audience") {
       const filter: AudienceFilter = { ...c.audience.filter, ...(b.filter ?? {}) };
       const region: Region = b.region ?? c.audience.region;
-      if (seg[3] === "preview") return preview(filter, region);
+      if (seg[3] === "preview") return preview(filter, region, enrolledSets[c.id]);
       if (seg[3] === "candidates") {
         const page = Number(b.page ?? 1);
         const size = 12;
         const set = enrolledSets[c.id] ?? new Set();
-        const all: Candidate[] = leads.map((ld) => ({
+        const all: Candidate[] = audienceMembers(filter).map((ld) => ({
           id: ld.id,
           name: ld.name,
           company: ld.company,
@@ -917,13 +1041,14 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
       const filter = c.audience.filter;
       const region = c.audience.region;
       const set = (enrolledSets[c.id] ??= new Set());
-      let ids: string[] = b.all ? leads.filter((l) => !heldReason(l, filter, region)).map((l) => l.id) : (b.lead_ids ?? []);
+      const members = audienceMembers(filter);
+      let ids: string[] = b.all ? members.filter((l) => !heldReason(l, filter, region)).map((l) => l.id) : [...new Set<string>(b.lead_ids ?? [])];
       ids = ids.filter((id) => {
-        const ld = leads.find((l) => l.id === id);
+        const ld = members.find((l) => l.id === id);
         return ld && !heldReason(ld, filter, region) && !set.has(id);
       });
       ids.forEach((id) => set.add(id));
-      const added = b.all ? preview(filter, region).will_enroll : ids.length;
+      const added = ids.length;
       c.enrolled_count += added;
       return { enrolled: added, total: c.enrolled_count };
     }
@@ -991,9 +1116,11 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
       const s = c.steps[idx];
       if (M === "POST" && sub === "draft") return { candidates: draftsFromBrief(c, n) };
       if (M === "POST" && sub === "approve") {
+        const variants = stepVariants(s);
+        if (variants.some((variant) => !variant.subject.trim() || !variant.body.trim())) throw new MockError(422, "Write a subject and body for every variant before approving.");
         s.lint = lintEmail(s.subject, s.body, n === 1);
         s.approved = true;
-        s.approved_over = s.lint.problems.map((p) => p.text);
+        s.approved_over = variants.flatMap((variant) => lintEmail(variant.subject, variant.body, n === 1).problems.map((problem) => `${variant.id}: ${problem.text}`));
         return full(c);
       }
       if (M === "DELETE" && !sub) {
@@ -1004,7 +1131,8 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
       }
       if (M === "POST" && sub === "preview") {
         const p = profiles.find((x) => x.id === c.schedule.sender_profile_id);
-        const ld = leads.find((l) => !heldReason(l, c.audience.filter, c.audience.region))!;
+        const ld = audienceMembers(c.audience.filter).find((lead) => !heldReason(lead, c.audience.filter, c.audience.region));
+        if (!ld) throw new MockError(422, "No eligible lead is available for this preview. Update the audience filters.");
         return {
           from: p ? `${p.name} <${p.name.split(" ")[0].toLowerCase()}@hubblyhq.com>` : "No sender chosen",
           to: `${ld.name} <${ld.email}>`,
@@ -1021,15 +1149,20 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
     tickMailboxes();
     if (M === "GET" && seg.length === 1) return { mailboxes: clone(mailboxes), domains_pending: clone(pendingDomains), limits } satisfies MailboxesResponse;
     if (M === "POST" && seg[1] === "managed") {
-      const count = Math.max(1, Math.min(Number(b.count ?? 3), limits.max_mailboxes - mailboxes.filter((m) => m.status !== "burnt").length));
+      const count = Number(b.count ?? 3);
+      const room = limits.max_mailboxes - mailboxes.filter((m) => m.status !== "burnt").length;
+      if (!Number.isInteger(count) || count < 1 || count > room) throw new MockError(422, `Choose between 1 and ${room} mailboxes.`);
       const base = String(b.name ?? "yourbrand").toLowerCase().replace(/[^a-z0-9]/g, "") || "yourbrand";
       const domain = `try${base}.com`;
-      const made = ["hello", "team", "hi", "go", "meet"].slice(0, count).map((local) => {
+      const existing = mailboxes.filter((m) => m.status !== "burnt" && m.address.split("@")[1] === domain);
+      if (existing.length + count > 3) throw new MockError(422, "A sending domain can have at most 3 mailboxes. Use another domain for more.");
+      const made = ["hello", "team", "hi", "go", "meet"].filter((local) => !mailboxes.some((m) => m.address === `${local}@${domain}`)).slice(0, count).map((local) => {
         const m = mb(`${local}@${domain}`, "managed", "provisioning");
         provisioningStartedAt.set(m.id, Date.now());
         mailboxes.unshift(m);
         return m;
       });
+      registerSendingDomain(domain, "managed");
       return { created: made.length, domain };
     }
     if (M === "GET" && seg[1] === "connect") return { url: `https://accounts.example/${seg[2]}/oauth?return=/mail/mailboxes` };
@@ -1037,8 +1170,19 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
       const rows: ImportRow[] = b.rows ?? [];
       const room = limits.max_mailboxes - mailboxes.filter((m) => m.status !== "burnt").length;
       if (rows.length > room) throw new MockError(422, `You have room for ${room} more mailbox${room === 1 ? "" : "es"} on your plan. Untick ${rows.length - room} and try again.`);
+      const addresses = new Set(mailboxes.map((mailbox) => mailbox.address.toLowerCase()));
+      const counts = new Map<string, number>();
+      mailboxes.filter((mailbox) => mailbox.status !== "burnt").forEach((mailbox) => { const domain = mailbox.address.split("@")[1].toLowerCase(); counts.set(domain, (counts.get(domain) ?? 0) + 1); });
+      for (const row of rows) {
+        const address = String(row.address ?? "").trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address) || addresses.has(address)) throw new MockError(422, "Choose valid, unique mailbox addresses.");
+        const domain = address.split("@")[1];
+        if ((counts.get(domain) ?? 0) >= 3) throw new MockError(422, `${domain} would exceed the limit of 3 mailboxes per domain.`);
+        addresses.add(address); counts.set(domain, (counts.get(domain) ?? 0) + 1);
+      }
       rows.forEach((r) => {
-        const m = mb(r.address, "imported", "verifying");
+        const m = mb(r.address.trim().toLowerCase(), "imported", "verifying");
+        registerSendingDomain(m.address.split("@")[1], "own");
         provisioningStartedAt.set(m.id, Date.now() - 21000);
         mailboxes.unshift(m);
       });
@@ -1053,8 +1197,18 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
     const m = mailboxes.find((x) => x.id === seg[1]);
     if (!m) throw new MockError(404, "That mailbox was removed.");
     if (M === "POST" && seg[2] === "pause") {
-      m.status = m.status === "paused" ? "ready" : "paused";
-      m.note = m.status === "paused" ? "Paused by you" : undefined;
+      if (m.status === "paused") {
+        m.status = m.resume_status ?? "ready";
+        m.pause_reason = undefined;
+        m.note = undefined;
+        m.resume_status = undefined;
+        if (m.status === "ready" && !m.warmup) m.warmup = { day: 35, per_day_now: limits.per_mailbox_daily, per_day_target: limits.per_mailbox_daily };
+      } else if (m.status === "ready" || m.status === "warming") {
+        m.resume_status = m.status;
+        m.status = "paused";
+        m.pause_reason = "manual";
+        m.note = "Paused by you";
+      } else throw new MockError(422, "Only ready or warming mailboxes can be paused.");
       return clone(m);
     }
     if (M === "DELETE") {

@@ -11,6 +11,7 @@ import { useCampaign } from "@/components/campaign/useCampaign";
 import { Builder } from "@/components/campaign/Builder";
 import { Enrolled } from "@/components/campaign/Enrolled";
 import { api } from "@/lib/outreach/client";
+import { pauseReasons } from "@/lib/outreach/campaign-planning";
 import type { BuildMode, Campaign } from "@/lib/outreach/types";
 
 function BuildModeQuestion({ onPick }: { onPick: (m: BuildMode) => void }) {
@@ -28,7 +29,7 @@ function BuildModeQuestion({ onPick }: { onPick: (m: BuildMode) => void }) {
             className="text-left flex flex-col gap-2 p-6 rounded-card border border-line bg-surface cursor-pointer hover:border-accent hover:shadow-[0_2px_16px_rgba(43,89,195,0.12)]"
           >
             <span className="text-lg font-semibold">Build it myself</span>
-            <span className="text-ink-2 text-[14px] leading-relaxed">Four steps: who it goes to, what it says, when it sends, then review and launch.</span>
+            <span className="text-ink-2 text-[14px] leading-relaxed">Four steps: audience, sequence, sending capacity, then review and launch.</span>
           </button>
           <button
             type="button"
@@ -176,6 +177,7 @@ function CampaignPage() {
           ) : undefined
         }
       />
+      {c.status === "paused" && <div role="status" className="px-8 py-3 bg-warn-bg text-warn text-sm">Paused: {pauseReasons[c.pause_reason ?? "manual"]}. Review mailbox health before resuming.</div>}
       <Overview c={c} onAction={act} busy={busy} />
       {showBuilder ? <Builder cm={cm} step={step} /> : <Enrolled campaign={c} />}
     </>

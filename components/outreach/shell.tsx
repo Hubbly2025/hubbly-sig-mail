@@ -7,7 +7,8 @@ import { cx } from "@/components/ui-hubbly";
 import { IconChat, IconGrid, IconLock, IconMail, IconPerson, IconSend, IconSignal, IconPlug, IconSearch, IconList, IconGlobe, IconBarChart } from "@/components/ui-hubbly/icons";
 import styles from "./sidebar.module.css";
 import { useResource } from "@/lib/outreach/hooks";
-import { BRAND, brandInfo, hostHref } from "@/lib/outreach/brand";
+import { BRAND, brandInfo } from "@/lib/outreach/brand";
+import { navGroups, defaultSidebarGroups, isCurrentNavItem, type NavItem } from "@/lib/nav";
 import { MOCK } from "@/lib/outreach/client";
 import type { InboxCount, OutreachStatus, Permission } from "@/lib/outreach/types";
 import { Skel, ToastProvider } from "./feedback";
@@ -44,19 +45,14 @@ function IconCheckInbox() {
   );
 }
 
-const defaultSidebarGroups: Record<string, boolean> = {
-  workspace: false,
-  outreach: true,
-  signal: false,
-  agency: false,
-  settings: false,
-};
+const navIcons = { grid: IconGrid, person: IconPerson, approvals: IconCheckInbox, send: IconSend, list: IconList, chat: IconChat, chart: IconBarChart, mail: IconMail, globe: IconGlobe, signal: IconSignal, plug: IconPlug, gear: IconGear };
 
-function SidebarGroup({ label, open, active, count, onToggle, children }: {
+function SidebarGroup({ label, open, active, badges, alwaysOpen, onToggle, children }: {
   label: string;
   open: boolean;
   active: boolean;
-  count?: number;
+  badges?: ReactNode;
+  alwaysOpen?: boolean;
   onToggle: () => void;
   children: ReactNode;
 }) {
@@ -76,9 +72,9 @@ function SidebarGroup({ label, open, active, count, onToggle, children }: {
 
   return (
     <div className={cx(styles.group, label === "Settings" && styles.settings)}>
-      <button type="button" id={`${id}-header`} className={styles.groupLabel} aria-expanded={open} aria-controls={id} onClick={onToggle}>
+      <button type="button" id={`${id}-header`} className={styles.groupLabel} aria-expanded={open} aria-controls={id} aria-disabled={alwaysOpen || undefined} onClick={alwaysOpen ? undefined : onToggle}>
         <span>{label}</span>
-        {!open && !!count && <span className={styles.badge} aria-label={`${count} pending approvals`}>{count}</span>}
+        {!open && badges}
         {!open && active && <><span className={styles.currentDot} aria-hidden="true" /><span className="sr-only">Contains current page</span></>}
         <svg className={styles.chevron} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
       </button>
@@ -95,7 +91,14 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const badge = useResource<InboxCount>(status?.enabled ? "outreach/inbox?count_only=true" : null, { every: 60_000 });
+  const domains = useResource<import("@/lib/outreach/types").Domain[]>(status?.enabled && status.can.manage_mailboxes ? "outreach/domains" : null, { every: 60_000, refetchOnFocus: true });
+  const domainAttention = domains.data?.some((domain) => domain.status === "needs_fix" || !domain.spf || !domain.dkim || !domain.dmarc);
   const locked = status && !status.enabled;
+  function itemBadge(item: NavItem) {
+    if (item.attention && domainAttention) return <span className={styles.attentionDot} role="img" aria-label="Domains need attention" title="Domains need attention" />;
+    const count = item.badge ? badge.data?.[item.badge] : undefined;
+    return count ? <span className={styles.badge} aria-label={`${count} ${item.badge === "unread" ? "unread replies" : "pending approvals"}`}>{count}</span> : null;
+  }
   useEffect(() => {
     const on = () => badge.reload();
     window.addEventListener("outreach:inbox-changed", on);
@@ -116,31 +119,8 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const groups = [
-    { label: "Workspace", items: [
-      { href: hostHref("/dashboard"), label: "Dashboard", icon: <IconGrid />, host: true },
-      { href: hostHref("/leads"), label: "Leads", icon: <IconPerson />, host: true },
-    ] },
-    { label: "Outreach", items: [
-      { href: "/overview", label: "Overview", icon: <IconGrid /> },
-      { href: "/approvals", label: "Approval inbox", icon: <IconCheckInbox />, badge: badge.data?.count },
-      { href: "/campaigns", label: "Campaigns", icon: <IconSend /> },
-      { href: "/lists", label: "Lead lists", icon: <IconList /> },
-      { href: "/mailboxes", label: "Mailboxes", icon: <IconMail /> },
-      { href: "/domains", label: "Domains", icon: <IconGlobe /> },
-      { href: "/inbox", label: "Inbox", icon: <IconChat />, badge: badge.data?.unread },
-      { href: "/pipeline", label: "Pipeline", icon: <IconBarChart /> },
-    ] },
-    { label: "Signal", items: [
-      { href: hostHref("/pixel"), label: "Pixel & Setup", icon: <IconSignal />, host: true },
-      { href: hostHref("/integrations"), label: "Integrations", icon: <IconPlug />, host: true },
-    ] },
-    { label: "Settings", items: [
-      { href: "/settings", label: "Outreach settings", icon: <IconGear /> },
-    ] },
-  ];
-  const isCurrentPage = (href: string | null) => href !== null && (pathname === href || pathname.startsWith(`${href}/`));
-  const activeGroup = groups.find((group) => group.items.some((item) => isCurrentPage(item.href)))?.label.toLowerCase();
+  const groups = navGroups.filter((group) => !group.permission || status?.can[group.permission]);
+  const activeGroup = groups.find((group) => group.items.some((item) => isCurrentNavItem(item, pathname)))?.id;
   const [openGroups, setOpenGroups] = useState(() => ({ ...defaultSidebarGroups, ...(activeGroup ? { [activeGroup]: true } : {}) }));
 
   useEffect(() => {
@@ -156,6 +136,7 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
     } catch {
       next = { ...defaultSidebarGroups };
     }
+    for (const group of navGroups) if (group.alwaysOpen) next[group.id] = true;
     if (activeGroup) next[activeGroup] = true;
     setOpenGroups(next);
   }, [pathname, activeGroup]);
@@ -190,16 +171,18 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
       <div className={styles.navigation}>
         {filtered.map((group) => {
           if (!group.items.length) return null;
-          const open = openGroups[group.label.toLowerCase()] || !!query.trim();
+          const open = !!group.alwaysOpen || openGroups[group.id] || !!query.trim();
+          const groupLocked = locked && group.requiresOutreach;
           return (
-            <SidebarGroup key={group.label} label={group.label} open={open}
-              active={activeGroup === group.label.toLowerCase()}
-              count={group.label === "Outreach" && !locked ? badge.data?.count : undefined}
+            <SidebarGroup key={group.id} label={group.label} open={open} alwaysOpen={group.alwaysOpen}
+              active={activeGroup === group.id}
+              badges={!groupLocked && group.items.map((item) => <span key={item.label} className={styles.headerBadge}>{itemBadge(item)}</span>)}
               onToggle={() => toggleGroup(group.label, open)}>
               {group.items.map((item) => {
                 if (item.href === null) return null;
-                const active = isCurrentPage(item.href);
-                const content = <>{item.icon}<span className={styles.itemLabel}>{item.label}</span>{locked && group.label === "Outreach" ? <IconLock size={14} /> : "badge" in item && !!item.badge ? <span className={styles.badge}>{item.badge}</span> : null}</>;
+                const active = isCurrentNavItem(item, pathname);
+                const Icon = navIcons[item.icon];
+                const content = <><Icon /><span className={styles.itemLabel}>{item.label}</span>{groupLocked ? <><IconLock size={14} /><span className="sr-only">Outreach not enabled</span></> : itemBadge(item)}</>;
                 const className = cx(styles.item, active && styles.active);
                 return <li key={item.href}>{"host" in item ? (
                   <a href={item.href} className={className} aria-current={active ? "page" : undefined}>{content}</a>
@@ -244,7 +227,7 @@ function LockedCard() {
 export function OutreachShell({ children }: { children: ReactNode }) {
   const status = useResource<OutreachStatus>("outreach/status");
   const pathname = usePathname();
-  const fluidPage = ["/overview", "/lists", "/domains", "/pipeline"].includes(pathname);
+  const fluidPage = ["/overview", "/lists", "/domains", "/pipeline", "/mailboxes", "/meetings"].includes(pathname);
   return (
     <ToastProvider>
       <StatusCtx.Provider value={status.data ?? null}>

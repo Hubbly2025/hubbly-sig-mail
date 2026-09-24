@@ -1,62 +1,56 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError } from "@/lib/outreach/client";
+import useSWR from "swr";
+import { api } from "@/lib/outreach/client";
 import type { Campaign } from "@/lib/outreach/types";
 
 export type SaveState = "idle" | "saving" | "saved" | "error";
-
-/** Loads one campaign; exposes a debounced PATCH for autosave and a replace() for fresh server copies. */
+type Payload = Record<string, any>;
+function merge(a: Payload, b: Payload): Payload {
+  const out = { ...a };
+  for (const [key, value] of Object.entries(b)) out[key] = value && typeof value === "object" && !Array.isArray(value) ? merge(out[key] ?? {}, value) : value;
+  return out;
+}
 export function useCampaign(id: string) {
-  const [campaign, setCampaign] = useState<Campaign>();
-  const [error, setError] = useState<ApiError | Error>();
+  const resource = useSWR(`outreach/campaigns/${id}`, (path) => api<Campaign>("GET", path), { revalidateOnFocus: false });
   const [save, setSave] = useState<SaveState>("idle");
-  const pending = useRef<Record<string, unknown>>({});
+  const latest = useRef(resource.data);
+  latest.current = resource.data;
+  const pending = useRef<Payload>({});
+  const inFlight = useRef<Promise<boolean> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
-  const load = useCallback(async () => {
-    try {
-      setCampaign(await api<Campaign>("GET", `outreach/campaigns/${id}`));
-      setError(undefined);
-    } catch (e) {
-      setError(e as Error);
-    }
-  }, [id]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const flush = useCallback(async () => {
-    const body = pending.current;
-    pending.current = {};
-    if (!Object.keys(body).length) return;
-    setSave("saving");
-    try {
-      const c = await api<Campaign>("PATCH", `outreach/campaigns/${id}`, body);
-      setCampaign((prev) => (prev ? { ...c, steps: prev.steps.map((s) => c.steps.find((x) => x.n === s.n) ?? s) } : c));
-      setSave("saved");
-    } catch {
-      setSave("error");
-    }
-  }, [id]);
-
-  /** Optimistic local change + debounced PATCH (autosave). */
-  const patch = useCallback(
-    (body: Record<string, any>, apply: (c: Campaign) => Campaign) => {
-      setCampaign((c) => (c ? apply(c) : c));
-      for (const [k, v] of Object.entries(body)) {
-        const prev = pending.current[k];
-        pending.current[k] = prev && typeof prev === "object" && typeof v === "object" ? { ...(prev as object), ...v } : v;
+  const replace = useCallback((campaign: Campaign) => { latest.current = campaign; void resource.mutate(campaign, { revalidate: false }); }, [resource.mutate]);
+  const flush = useCallback((): Promise<boolean> => {
+    clearTimeout(timer.current);
+    if (inFlight.current) return inFlight.current;
+    const run = async () => {
+      while (Object.keys(pending.current).length) {
+        const body = pending.current;
+        pending.current = {};
+        setSave("saving");
+        try {
+          const campaign = await api<Campaign>("PATCH", `outreach/campaigns/${id}`, body);
+          replace(merge(campaign, pending.current) as Campaign);
+        } catch {
+          pending.current = merge(body, pending.current);
+          setSave("error");
+          return false;
+        }
       }
-      setSave("saving");
-      clearTimeout(timer.current);
-      timer.current = setTimeout(flush, 700);
-    },
-    [flush]
-  );
-
-  useEffect(() => () => clearTimeout(timer.current), []);
-
-  return { campaign, error, reload: load, replace: setCampaign, patch, flush, save, setSave };
+      setSave("saved");
+      return true;
+    };
+    inFlight.current = run().finally(() => { inFlight.current = null; });
+    return inFlight.current;
+  }, [id, replace]);
+  const patch = useCallback((body: Payload, apply: (campaign: Campaign) => Campaign) => {
+    if (latest.current) replace(apply(latest.current));
+    pending.current = merge(pending.current, body);
+    setSave("saving");
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => void flush(), 700);
+  }, [flush, replace]);
+  useEffect(() => () => { clearTimeout(timer.current); void flush(); }, [flush]);
+  return { campaign: resource.data, error: resource.error as Error | undefined, reload: () => resource.mutate(), replace, patch, flush, save, setSave };
 }
