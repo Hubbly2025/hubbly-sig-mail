@@ -1,58 +1,49 @@
-# Hubbly Mail — web
+# Hubbly Outreach — web
 
-The Mail frontend, served at `/mail` inside Hubbly Signal and ClickRabbit. Next.js 15 (App Router), TypeScript, Tailwind. Runs entirely on mock data until the Mail API ships.
+The Outreach interface, built to the devs' **"Email Outreach — Interface reference" (23 Sep 2026)**. Next.js 15, TypeScript, Tailwind. Served at `/mail` inside Hubbly Signal and ClickRabbit.
+
+It runs in **sample-data mode** by default (an in-browser stand-in for every `outreach/*` endpoint) so every screen works before it's pointed at Signal. A banner in the sidebar says so.
 
 ## Run it
 
 ```bash
 npm install
 npm run dev          # http://localhost:3000/mail
-npm run build        # production build
+npm run build
 npm run check:copy   # fails on vendor names or "AI" in UI source
 ```
 
-Set `NEXT_PUBLIC_MAIL_BRAND=clickrabbit` to see the ClickRabbit branding (default is `signal`).
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `NEXT_PUBLIC_OUTREACH_MOCK` | on | Set to `0` to call the real backend |
+| `NEXT_PUBLIC_OUTREACH_API_BASE` | `/api` | Where Signal serves `outreach/*` — confirm with the devs |
+| `NEXT_PUBLIC_MAIL_BRAND` | `signal` | `clickrabbit` for ClickRabbit branding |
 
-## Screens
+## Screens (doc section → route)
 
-| Route | Screen |
+| Doc | Route |
 | --- | --- |
-| `/mail/campaigns` | Campaigns: KPIs, table with filters, needs-attention, sending today |
-| `/mail/campaigns/new`, `/mail/campaigns/[id]` | Campaign builder: email steps, variants, variables, spin text, if/else, live preview, send checks |
-| `/mail/leads` | Lead lists, verification breakdown, business vs personal email |
-| `/mail/replies` | Replies by intent, Hubbly-drafted reply, time slots, Signal visit history |
-| `/mail/domains` | Domains, SPF/DKIM/DMARC, warm-up, mailboxes, DNS fix card |
-| `/mail/settings` | Schedule, deliverability, tracking, routing, compliance |
+| 6. Approval inbox | `/mail/approvals` — queue, thread, editable draft, rules panel, Send (with confirmation), Dismiss, Not interested, Write a draft, Done with it, J/K/E/Enter |
+| 4.1 Campaign list | `/mail/campaigns` — New campaign, "?", search, status tabs counted within search, cards (6) / table (15) |
+| 4.2 Build mode question | `/mail/campaigns/[id]` on a draft with no build mode |
+| 4.3 Builder | `/mail/campaigns/[id]?step=1…4` — step in the address; autosave; Save and continue |
+| 4.4 Hubbly build | `/mail/campaigns/[id]/build` |
+| 4.5 Overview | Above the builder; enrolled table once launched |
+| 5. Mailboxes | `/mail/mailboxes` — cards, 6 statuses, add (Managed / Connect / Import CSV with review), "?", DNS panels, 30 s refresh |
+| 7. Inbox | `/mail/inbox` — Replies / Sent, search, classification filter, slide-in thread, star, delete, 10 s refresh |
+| 8. Rules panel | Under every email in the builder and the approval inbox (`POST outreach/lint`) |
+| 9. Outreach settings | `/mail/settings` — sender profiles (postal address required), automatic replies with consent screen, footer example, opt-out list by reach |
+| 9.6 Outreach health | `/mail/health` — not in the sidebar; operators only |
 
-If the workspace doesn't have Mail (`mailEnabled: false`), every screen shows the upgrade card instead.
+Every button is shown or hidden from `GET outreach/status`. Every panel has four states: content, skeleton, empty, error with Try again.
 
 ## Where things live
 
-- `lib/mail/types.ts` — **the contract with the backend.** The Mail API returns these shapes.
-- `lib/mail/api.ts` — the only module screens import data from. Every function is async and returns mocks today.
-- `lib/mail/mock.ts` — sample data (fictional people and companies).
-- `lib/mail/render.ts` — preview renderer for `{variables}`, `{spin|text}` and `[if field = "x"]…[else]…[end]`.
-- `components/ui-hubbly/` — the Hubbly design system (tokens in `app/globals.css`, `tailwind.config.ts`).
+- `lib/outreach/types.ts` — response shapes read from the devs' doc. Fields marked **CONFIRM** aren't spelled out there.
+- `lib/outreach/client.ts` — the only thing that talks to the backend.
+- `lib/outreach/mock.ts` — sample-data mode.
+- `lib/outreach/lint.ts` — copy rules for sample mode only; live mode uses the server's `outreach/lint`.
+- `components/outreach/` — shell, sidebar, panels, toasts, dialogs, rules panel.
+- `components/campaign/` — builder and campaign pieces.
 
-## Wiring the real API
-
-Swap one function in `lib/mail/api.ts` per PR for a real `fetch` to the Mail API. Screens don't change. The browser never calls an email vendor and never holds a vendor key.
-
-## Serving at /mail (multi-zones)
-
-This app has `basePath: "/mail"`. In the Signal (and ClickRabbit) host app's `next.config`, add a rewrite so it serves from the same domain and the login cookie carries over:
-
-```js
-async rewrites() {
-  return [
-    { source: "/mail", destination: "https://<mail-deployment>/mail" },
-    { source: "/mail/:path*", destination: "https://<mail-deployment>/mail/:path*" },
-  ];
-}
-```
-
-## Rules
-
-- One screen or concern per PR; someone other than the builder reviews it.
-- No `app/api` routes that send email, no vendor SDKs, no `.env` secrets in this repo.
-- Never name an email vendor in the UI. Copy says "Hubbly", never "AI".
+See `CONTRACT_NOTES.md` for what the devs need to confirm before this goes live.
