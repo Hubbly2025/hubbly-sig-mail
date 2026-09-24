@@ -10,9 +10,9 @@ import { useResource } from "@/lib/outreach/hooks";
 import { formatSendTime } from "@/lib/outreach/message-time";
 import type { Page, ScheduledMessage } from "@/lib/outreach/types";
 
-export function ScheduledInbox({ query, page, onPage }: { query: string; page: number; onPage: (page: number) => void }) {
+export function ScheduledInbox({ query, campaign = "", page, onPage }: { query: string; campaign?: string; page: number; onPage: (page: number) => void }) {
   const toast = useToast();
-  const data = useResource<Page<ScheduledMessage>>(MOCK ? `outreach/scheduled?${new URLSearchParams({ q: query, page: String(page) })}` : null);
+  const data = useResource<Page<ScheduledMessage>>(MOCK ? `outreach/scheduled?${new URLSearchParams({ q: query, campaign, page: String(page) })}` : null);
   const [edit, setEdit] = useState<ScheduledMessage | null>(null);
   const [reschedule, setReschedule] = useState<ScheduledMessage | null>(null);
   const [cancel, setCancel] = useState<ScheduledMessage | null>(null);

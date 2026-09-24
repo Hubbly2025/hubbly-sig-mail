@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Button, StatusPill, cx } from "@/components/ui-hubbly";
-import { SegmentedControl } from "@/components/ui-hubbly/controls";
 import { IconSearch } from "@/components/ui-hubbly/icons";
 import { Dialog, Pager, Panel, useToast } from "@/components/outreach/feedback";
 import { PageHeader } from "@/components/outreach/shell";
@@ -10,10 +9,12 @@ import { classification } from "@/components/outreach/format";
 import { api } from "@/lib/outreach/client";
 import { MessageEditor } from "@/components/outreach/MessageComposer";
 import { ScheduledInbox } from "@/components/outreach/ScheduledInbox";
+import { InboxFolders } from "@/components/outreach/InboxFolders";
+import { InboxActions } from "@/components/outreach/InboxActions";
 import { useDebounced, useResource } from "@/lib/outreach/hooks";
 import type { Classification, Message, Page, ReplyRow, SentRow } from "@/lib/outreach/types";
 
-type View = "replies" | "sent" | "scheduled";
+type View = import("@/lib/outreach/types").InboxFolder;
 type Open = { kind: "reply"; row: ReplyRow } | { kind: "sent"; row: SentRow } | null;
 
 const delivery: Record<SentRow["delivery"], { label: string; tone: "success" | "neutral" | "danger" | "warn" }> = {
@@ -33,7 +34,11 @@ function Star({ on }: { on: boolean }) {
 
 export default function InboxPage() {
   const toast = useToast();
-  const [view, setView] = useState<View>("replies");
+  const [view, setView] = useState<View>("all");
+  const [campaign, setCampaign] = useState("");
+  const isReplies = view !== "sent" && view !== "scheduled";
+  const counts = useResource<import("@/lib/outreach/types").InboxCount>("outreach/inbox?count_only=true", { every: 10_000, refetchOnFocus: true });
+  const options = useResource<{ campaigns: string[] }>("outreach/inbox-options");
   const [q, setQ] = useState("");
   const [cls, setCls] = useState<Classification | "">("");
   const [page, setPage] = useState(1);
@@ -41,19 +46,33 @@ export default function InboxPage() {
   const [confirmDelete, setConfirmDelete] = useState<ReplyRow | null>(null);
   const dq = useDebounced(q, 300);
 
-  useEffect(() => setPage(1), [dq, cls, view]);
+  useEffect(() => setPage(1), [dq, cls, view, campaign]);
 
   const qs = new URLSearchParams({ page: String(page) });
   if (dq) qs.set("q", dq);
-  if (cls && view === "replies") qs.set("classification", cls);
-  const replies = useResource<Page<ReplyRow>>(view === "replies" ? `outreach/replies?${qs}` : null, { every: 10_000, refetchOnFocus: true });
+  if (campaign) qs.set("campaign", campaign);
+  if (isReplies) qs.set("folder", view);
+  if (cls && isReplies) qs.set("classification", cls);
+  const replies = useResource<Page<ReplyRow>>(isReplies ? `outreach/replies?${qs}` : null, { every: 10_000, refetchOnFocus: true });
   const sent = useResource<Page<SentRow>>(view === "sent" ? `outreach/sent?${qs}` : null);
-  const cur = view === "replies" ? replies : sent;
+  const cur = isReplies ? replies : sent;
+
+  function changed(row?: ReplyRow) {
+    if (row) setOpen((current) => current?.kind === "reply" && current.row.id === row.id ? { kind: "reply", row } : current);
+    void replies.reload(); void counts.reload();
+    window.dispatchEvent(new Event("outreach:inbox-changed"));
+  }
+
+  async function openReply(row: ReplyRow) {
+    setOpen({ kind: "reply", row });
+    try { changed(await api<ReplyRow>("POST", `outreach/replies/${row.id}/read`)); }
+    catch (e) { toast("error", (e as Error).message); }
+  }
 
   async function star(r: ReplyRow) {
     try {
       const next = await api<ReplyRow>("POST", `outreach/replies/${r.id}/star`);
-      replies.setData((p) => p && { ...p, items: p.items.map((x) => (x.id === r.id ? next : x)) });
+      changed(next);
       if (open?.kind === "reply" && open.row.id === r.id) setOpen({ kind: "reply", row: next });
       toast("success", next.starred ? "Starred — kept past the retention schedule." : "Unstarred.");
     } catch (e) {
@@ -65,29 +84,25 @@ export default function InboxPage() {
 
   return (
     <>
-      <PageHeader title="Inbox" context={view === "scheduled" ? "Upcoming emails · sample data" : cur.data ? `${cur.data.total.toLocaleString("en-US")} ${view === "replies" ? "replies received" : "messages sent"}` : " "} />
-      <div className="px-8 py-6 flex flex-col gap-4 relative">
+      <PageHeader title="Inbox" context={view === "scheduled" ? "Upcoming emails · sample data" : cur.data ? `${cur.data.total.toLocaleString("en-US")} ${isReplies ? "replies received" : "messages sent"}` : " "} />
+      <div className="px-4 md:px-8 py-6 flex flex-col md:flex-row gap-6 relative md:max-w-[calc(100vw-244px)]">
+        <InboxFolders current={{ folder: view, classification: cls, campaign, search: q }} unread={counts.data?.unread ?? 0}
+          onFolder={(v) => { setView(v); setPage(1); setOpen(null); }}
+          onView={(v) => { setView(v.folder); setCls(v.classification); setCampaign(v.campaign); setQ(v.search); setPage(1); setOpen(null); }} />
+        <div className="flex-1 min-w-0 flex flex-col gap-4">
         <div className="flex items-center gap-3 flex-wrap">
-          <SegmentedControl
-            label="View"
-            className="w-[360px]"
-            value={view}
-            onChange={(v) => {
-              setView(v);
-              setOpen(null);
-            }}
-            options={[
-              { value: "replies", label: "Replies received" },
-              { value: "sent", label: "Sent" },
-              { value: "scheduled", label: "Scheduled" },
-            ]}
-          />
           <label className="flex items-center gap-2 w-[280px] min-h-10 px-3 box-border border border-control rounded-control bg-surface text-muted">
             <IconSearch size={15} />
             <span className="sr-only">Search</span>
             <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people, companies, text" className="border-0 outline-none text-sm flex-1 bg-transparent text-ink" />
           </label>
-          {view === "replies" && (
+          <label className="flex items-center gap-2 text-meta text-muted">Campaign
+            <select aria-label="Campaign" value={campaign} onChange={(e) => setCampaign(e.target.value)} className="min-h-10 max-w-52 px-2.5 rounded-control border border-control bg-surface text-sm text-ink">
+              <option value="">All campaigns</option>
+              {options.data?.campaigns.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </label>
+          {isReplies && (
             <label className="flex items-center gap-2 text-meta text-muted">
               Classification
               <select value={cls} onChange={(e) => setCls(e.target.value as Classification | "")} className="min-h-10 px-2.5 rounded-control border border-control bg-surface text-sm text-ink">
@@ -102,9 +117,9 @@ export default function InboxPage() {
           )}
         </div>
 
-        {view === "scheduled" ? <ScheduledInbox query={dq} page={page} onPage={setPage} /> : <Panel loading={cur.loading} error={cur.error} onRetry={cur.reload} empty={cur.data?.total === 0} emptyText={q || cls ? "Nothing matches." : view === "replies" ? "No replies yet." : "Nothing sent yet."}>
+        {view === "scheduled" ? <ScheduledInbox query={dq} campaign={campaign} page={page} onPage={setPage} /> : <Panel loading={cur.loading} error={cur.error} onRetry={cur.reload} empty={cur.data?.total === 0} emptyText={q || cls ? "Nothing matches." : isReplies ? "No replies yet." : "Nothing sent yet."}>
           <ul className="list-none m-0 p-0">
-            {view === "replies"
+            {isReplies
               ? replies.data?.items.map((r) => {
                   const cl = classification[r.classification];
                   return (
@@ -112,10 +127,12 @@ export default function InboxPage() {
                       <button type="button" aria-label={r.starred ? "Unstar" : "Star"} aria-pressed={r.starred} onClick={() => star(r)} className="w-8 h-8 rounded-lg border-0 bg-transparent text-muted cursor-pointer hover:bg-active flex items-center justify-center">
                         <Star on={r.starred} />
                       </button>
-                      <button type="button" onClick={() => setOpen({ kind: "reply", row: r })} className="flex-1 min-w-0 grid grid-cols-[200px_minmax(0,1fr)_130px_90px] gap-4 items-center text-left border-0 bg-transparent cursor-pointer text-ink p-0">
-                        <span className="font-semibold truncate">{r.from_name}</span>
+                      <button type="button" onClick={() => openReply(r)} className="flex-1 min-w-0 grid grid-cols-1 lg:grid-cols-[150px_minmax(0,1fr)_110px_80px] gap-4 items-center text-left border-0 bg-transparent cursor-pointer text-ink p-0">
+                        <span className={cx("truncate flex items-center gap-2", !r.read && "font-semibold")}>
+                          {!r.read && <><span aria-hidden className="w-2 h-2 rounded-full bg-blue-600 shrink-0" /><span className="sr-only">Unread: </span></>}{r.from_name}
+                        </span>
                         <span className="truncate text-ink-2">
-                          <span className="text-ink">{r.snippet}</span> <span className="text-muted">· {r.campaign_name}</span>
+                          {r.reminder && <span className="text-accent-ink font-semibold">Reminder · {r.note ? `${r.note} · ` : ""}</span>}<span className="text-ink">{r.snippet}</span> <span className="text-muted">· {r.campaign_name}</span>
                         </span>
                         <span>
                           <StatusPill tone={cl.tone} className="!min-h-[22px] !text-xs !px-2">
@@ -129,7 +146,7 @@ export default function InboxPage() {
                 })
               : sent.data?.items.map((s) => (
                   <li key={s.id} className={cx("px-5 py-3 border-b border-divider last:border-b-0", open?.row.id === s.id && "bg-accent-soft")}>
-                    <button type="button" onClick={() => setOpen({ kind: "sent", row: s })} className="w-full grid grid-cols-[200px_minmax(0,1fr)_110px_100px] gap-4 items-center text-left border-0 bg-transparent cursor-pointer text-ink p-0">
+                    <button type="button" onClick={() => setOpen({ kind: "sent", row: s })} className="w-full grid grid-cols-1 lg:grid-cols-[150px_minmax(0,1fr)_100px_80px] gap-4 items-center text-left border-0 bg-transparent cursor-pointer text-ink p-0">
                       <span className="font-semibold truncate">{s.to}</span>
                       <span className="truncate text-ink-2">
                         <span className="text-ink">{s.subject}</span> <span className="text-muted">· {s.snippet}</span>
@@ -146,6 +163,7 @@ export default function InboxPage() {
           </ul>
           {cur.data && <Pager page={page} total={cur.data.total} size={cur.data.page_size} onPage={setPage} />}
         </Panel>}
+        </div>
       </div>
 
       {open && (
@@ -177,6 +195,7 @@ export default function InboxPage() {
                 ×
               </button>
             </div>
+            <InboxActions key={open.row.id} item={open} onChanged={changed} />
             <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-3.5 bg-bg">
               {thread.map((m) => (
                 <article key={m.id} className="bg-surface border border-line rounded-card px-4 py-3.5 flex flex-col gap-2">
@@ -197,7 +216,7 @@ export default function InboxPage() {
                   onDone={(result) => {
                     if (result?.status === "sent") {
                       setOpen((current) => current && current.row.thread_id === result.thread_id ? { ...current, row: { ...current.row, thread: result.thread } } as Open : current);
-                      if (view === "replies") replies.reload(); else sent.reload();
+                      if (isReplies) replies.reload(); else sent.reload();
                     }
                   }} />
               </div>
@@ -223,6 +242,7 @@ export default function InboxPage() {
                   await api("DELETE", `outreach/replies/${r.id}`);
                   replies.setData((p) => p && { ...p, items: p.items.filter((x) => x.id !== r.id), total: p.total - 1 });
                   setOpen(null);
+                  changed();
                   toast("success", "Reply deleted.");
                 } catch (e) {
                   toast("error", (e as Error).message);

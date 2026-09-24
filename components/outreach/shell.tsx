@@ -83,7 +83,7 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
       { href: "/lists", label: "Lead lists", icon: <IconList /> },
       { href: "/mailboxes", label: "Mailboxes", icon: <IconMail /> },
       { href: "/domains", label: "Domains", icon: <IconGlobe /> },
-      { href: "/inbox", label: "Inbox", icon: <IconChat /> },
+      { href: "/inbox", label: "Inbox", icon: <IconChat />, badge: badge.data?.unread },
       { href: "/pipeline", label: "Pipeline", icon: <IconBarChart /> },
     ] },
     { label: "Signal", items: [

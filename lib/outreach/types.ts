@@ -19,6 +19,7 @@ export interface OutreachStatus {
 
 /** GET outreach/inbox?count_only=true */
 export interface InboxCount {
+  unread: number;
   count: number;
 }
 
@@ -273,7 +274,22 @@ export interface InboxBundle {
   draft: { subject: string; body: string; lint: LintReport; slots: AvailabilitySlot[] } | null;
 }
 
+export type InboxFolder = "all" | "unread" | "starred" | "snoozed" | "scheduled" | "sent" | "archived" | "untracked";
+export interface InboxView {
+  id: string;
+  name: string;
+  folder: InboxFolder;
+  classification: Classification | "";
+  campaign: string;
+  search: string;
+}
 export interface ReplyRow {
+  read?: boolean;
+  archived?: boolean;
+  untracked?: boolean;
+  snoozed_until?: string | null;
+  reminder?: boolean;
+  note?: string;
   id: string;
   thread_id: string;
   contact_ref: string;

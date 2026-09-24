@@ -482,6 +482,33 @@ let replies: ReplyRow[] = [
   }),
 ];
 
+const savedViews: import("./types").InboxView[] = [];
+replies.forEach((r, i) => {
+  r.read = i > 5;
+  r.archived = i === 8;
+  r.untracked = i === 9 || i === 10;
+  r.snoozed_until = i === 7 ? new Date(Date.now() + 86_400_000).toISOString() : i === 6 ? new Date(Date.now() - 60_000).toISOString() : null;
+  if (i === 6) r.note = "Follow up after the team meeting.";
+});
+const reminders = new Map<string, { until: string; note: string; messages: number }>();
+function wakeReplies() {
+  replies.forEach((r) => {
+    if (r.snoozed_until && Date.parse(r.snoozed_until) <= Date.now()) {
+      r.snoozed_until = null; r.reminder = true; r.read = false; r.archived = false;
+    }
+  });
+  reminders.forEach((reminder, id) => {
+    if (Date.parse(reminder.until) > Date.now()) return;
+    const s = sent.find((item) => item.id === id);
+    const existing = s && replies.find((item) => item.thread_id === s.thread_id);
+    if (s && (!existing || existing.thread.filter((m) => m.direction === "in").length <= reminder.messages)) {
+      if (existing) { existing.read = false; existing.reminder = true; existing.note = reminder.note; existing.archived = false; existing.snoozed_until = null; }
+      else replies.unshift({ ...s, id: nid("rep"), from_name: s.to.split(" <")[0], from_email: s.to.match(/<([^>]+)>/)?.[1] ?? s.to, classification: "not_now", received_at: "Just now", starred: false, snippet: "No reply yet", read: false, reminder: true, note: reminder.note });
+    }
+    reminders.delete(id);
+  });
+}
+
 const sent: SentRow[] = Array.from({ length: 40 }, (_, i) => {
   const f = pick(FIRST);
   const co = pick(CO);
@@ -761,7 +788,7 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
     if (M === "GET") {
       const page = Math.max(1, Number(q.get("page")) || 1);
       const search = (q.get("q") ?? "").toLowerCase();
-      const rows = scheduled.filter((item) => `${item.to_name} ${item.to_email} ${item.subject} ${item.body}`.toLowerCase().includes(search))
+      const rows = scheduled.filter((item) => (!q.get("campaign") || item.campaign_name === q.get("campaign")) && `${item.to_name} ${item.to_email} ${item.subject} ${item.body}`.toLowerCase().includes(search))
         .sort((a, z) => Date.parse(a.send_at) - Date.parse(z.send_at));
       return clone({ items: rows.slice((page - 1) * 12, page * 12), total: rows.length, page, page_size: 12 });
     }
@@ -784,7 +811,7 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
 
   // approval inbox
   if (seg[0] === "inbox") {
-    if (M === "GET" && seg.length === 1) return q.get("count_only") === "true" ? { count: inbox.length } : inbox.map(withAvailability);
+    if (M === "GET" && seg.length === 1) { wakeReplies(); return q.get("count_only") === "true" ? { count: inbox.length, unread: replies.filter((r) => !r.read && !r.archived && !r.snoozed_until).length } : inbox.map(withAvailability); }
     if (M === "POST" && seg[1] === "replies") {
       const rid = seg[2];
       const i = inbox.findIndex((x) => x.reply.id === rid);
@@ -1037,24 +1064,73 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
   }
 
   // inbox (all mail)
+  if (seg[0] === "views") {
+    if (M === "GET") return clone(savedViews);
+    if (M === "POST") {
+      const name = String(b.name ?? "").trim();
+      if (!name || name.length > 80) throw new MockError(422, "Enter a view name of 1–80 characters.");
+      if (!["all", "unread", "starred", "snoozed", "scheduled", "sent", "archived", "untracked"].includes(b.folder) || (b.classification && !CLS.includes(b.classification))) throw new MockError(422, "Choose a valid folder and classification.");
+      const view: import("./types").InboxView = { id: nid("view"), name, folder: b.folder, classification: b.classification || "", campaign: String(b.campaign ?? ""), search: String(b.search ?? "") };
+      savedViews.push(view); return clone(view);
+    }
+    if (M === "DELETE") {
+      const index = savedViews.findIndex((v) => v.id === (seg[1] ?? b.id));
+      if (index < 0) throw new MockError(404, "View not found.");
+      savedViews.splice(index, 1); return { ok: true };
+    }
+  }
+  if (M === "GET" && path === "inbox-options") return { campaigns: [...new Set([...replies, ...sent].map((r) => r.campaign_name))], leads: leads.map((l) => ({ contact_ref: l.id, name: l.name, email: l.email })) };
+  if (M === "POST" && seg[0] === "sent" && seg[2] === "remind") {
+    const row = sent.find((s) => s.id === seg[1]);
+    if (!row) throw new MockError(404, "Message not found.");
+    if (!Number.isFinite(Date.parse(b.until)) || Date.parse(b.until) <= Date.now()) throw new MockError(422, "Choose a future reminder time.");
+    reminders.set(row.id, { until: b.until, note: String(b.note ?? ""), messages: replies.find((r) => r.thread_id === row.thread_id)?.thread.filter((m) => m.direction === "in").length ?? 0 });
+    return { ok: true };
+  }
   if (M === "GET" && path === "replies") {
     const term = (q.get("q") ?? "").toLowerCase();
     const cls = q.get("classification");
     const page = Number(q.get("page") ?? 1);
     const size = 15;
-    const rows = replies.filter((r) => (!cls || r.classification === cls) && (!term || `${r.from_name} ${r.from_email} ${r.snippet} ${r.campaign_name}`.toLowerCase().includes(term)));
+    wakeReplies();
+    const folder = q.get("folder") ?? "all";
+    const campaign = q.get("campaign");
+    const rows = replies.filter((r) => {
+      const matches = folder === "archived" ? r.archived : folder === "snoozed" ? !!r.snoozed_until && !r.archived : folder === "untracked" ? r.untracked && !r.archived && !r.snoozed_until : !r.archived && !r.snoozed_until && (folder !== "unread" || !r.read) && (folder !== "starred" || r.starred);
+      return matches && (!campaign || r.campaign_name === campaign) && (!cls || r.classification === cls) && (!term || `${r.from_name} ${r.from_email} ${r.snippet} ${r.campaign_name}`.toLowerCase().includes(term));
+    });
     return { items: clone(rows.slice((page - 1) * size, page * size)), total: rows.length, page, page_size: size } satisfies Page<ReplyRow>;
   }
   if (M === "GET" && path === "sent") {
     const term = (q.get("q") ?? "").toLowerCase();
     const page = Number(q.get("page") ?? 1);
     const size = 15;
-    const rows = sent.filter((r) => !term || `${r.to} ${r.subject} ${r.campaign_name}`.toLowerCase().includes(term));
+    const rows = sent.filter((r) => (!q.get("campaign") || r.campaign_name === q.get("campaign")) && (!term || `${r.to} ${r.subject} ${r.campaign_name}`.toLowerCase().includes(term)));
     return { items: clone(rows.slice((page - 1) * size, page * size)), total: rows.length, page, page_size: size } satisfies Page<SentRow>;
   }
   if (seg[0] === "replies" && seg[1]) {
     const r = replies.find((x) => x.id === seg[1]);
     if (!r) throw new MockError(404, "That reply was deleted.");
+    if (M === "POST" && ["read", "unread", "snooze", "unsnooze", "archive", "unarchive", "handled", "link", "opt-out"].includes(seg[2])) {
+      const action = seg[2];
+      if (action === "read" || action === "unread") r.read = action === "read";
+      if (action === "archive" || action === "unarchive" || action === "handled") { r.archived = action !== "unarchive"; if (action === "handled") r.read = true; }
+      if (action === "snooze") {
+        if (!Number.isFinite(Date.parse(b.until)) || Date.parse(b.until) <= Date.now()) throw new MockError(422, "Choose a future snooze time.");
+        r.snoozed_until = b.until; r.note = String(b.note ?? ""); r.reminder = false;
+      }
+      if (action === "unsnooze") { r.snoozed_until = null; r.reminder = false; }
+      if (action === "link") {
+        const lead = leads.find((l) => l.id === b.contact_ref);
+        if (!lead) throw new MockError(422, "Choose a lead.");
+        r.contact_ref = lead.id; r.untracked = false;
+      }
+      if (action === "opt-out") {
+        if (!suppression.some((s) => s.email === r.from_email)) suppression.push({ id: nid("sup"), email: r.from_email, reason: "Opted out", scope: "workspace", campaign_name: null, added_at: "Just now" });
+        r.classification = "unsubscribe"; r.read = true; r.archived = true;
+      }
+      return clone(r);
+    }
     if (M === "POST" && seg[2] === "star") {
       r.starred = !r.starred;
       return clone(r);
