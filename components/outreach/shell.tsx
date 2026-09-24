@@ -7,7 +7,7 @@ import { cx } from "@/components/ui-hubbly";
 import { IconChat, IconGrid, IconLock, IconMail, IconPerson, IconSend, IconSignal, IconPlug, IconSearch } from "@/components/ui-hubbly/icons";
 import styles from "./sidebar.module.css";
 import { useResource } from "@/lib/outreach/hooks";
-import { BRAND, brandInfo } from "@/lib/outreach/brand";
+import { BRAND, brandInfo, hostHref } from "@/lib/outreach/brand";
 import { MOCK } from "@/lib/outreach/client";
 import type { InboxCount, OutreachStatus, Permission } from "@/lib/outreach/types";
 import { Skel, ToastProvider } from "./feedback";
@@ -73,8 +73,8 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
 
   const groups = [
     { label: "Workspace", items: [
-      { href: brand.hostDashboard, label: "Dashboard", icon: <IconGrid />, host: true },
-      { href: brand.hostLeads, label: "Leads", icon: <IconPerson />, host: true },
+      { href: hostHref("/dashboard"), label: "Dashboard", icon: <IconGrid />, host: true },
+      { href: hostHref("/leads"), label: "Leads", icon: <IconPerson />, host: true },
     ] },
     { label: "Outreach", items: [
       { href: "/approvals", label: "Approval inbox", icon: <IconCheckInbox />, badge: badge.data?.count },
@@ -83,8 +83,8 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
       { href: "/inbox", label: "Inbox", icon: <IconChat /> },
     ] },
     { label: "Signal", items: [
-      { href: "/pixel", label: "Pixel & Setup", icon: <IconSignal />, host: true },
-      { href: "/integrations", label: "Integrations", icon: <IconPlug />, host: true },
+      { href: hostHref("/pixel"), label: "Pixel & Setup", icon: <IconSignal />, host: true },
+      { href: hostHref("/integrations"), label: "Integrations", icon: <IconPlug />, host: true },
     ] },
     { label: "Settings", items: [
       { href: "/settings", label: "Outreach settings", icon: <IconGear /> },
@@ -92,7 +92,7 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
   ];
   const filtered = groups.map((group) => ({
     ...group,
-    items: group.items.filter((item) => item.label.toLowerCase().includes(query.trim().toLowerCase())),
+    items: group.items.filter((item) => item.href !== null && item.label.toLowerCase().includes(query.trim().toLowerCase())),
   }));
 
   return (
@@ -111,6 +111,7 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
           <div key={group.label} className={cx(styles.group, group.label === "Settings" && styles.settings)}>
             <div className={styles.groupLabel}>{group.label}</div>
             {group.items.map((item) => {
+              if (item.href === null) return null;
               const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
               const content = <>{item.icon}<span className={styles.itemLabel}>{item.label}</span>{locked && group.label === "Outreach" ? <IconLock size={14} /> : "badge" in item && !!item.badge ? <span className={styles.badge}>{item.badge}</span> : null}</>;
               const className = cx(styles.item, active && styles.active);
