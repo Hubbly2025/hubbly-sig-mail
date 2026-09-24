@@ -410,7 +410,7 @@ function StepEditor({ cm, s, total }: { cm: CM; s: Step; total: number }) {
       title={first ? "Email 1 · first email" : `Email ${s.n} · follow-up`}
       actions={
         <div className="flex items-center gap-2">
-          {!canApprove && (live.approved ? <StatusPill tone="success">Approved</StatusPill> : <StatusPill tone="neutral">Not approved</StatusPill>)}
+          {live.approved ? <StatusPill tone="success">Approved</StatusPill> : <StatusPill tone="neutral">Not approved</StatusPill>}
           <Button small disabled={writing} onClick={write}>
             <IconPen size={14} />
             {writing ? "Writing…" : "Write it for me"}

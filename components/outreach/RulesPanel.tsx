@@ -68,7 +68,7 @@ export function RulesPanel({ subject, body, first, initial }: { subject: string;
           ["Sentence variety", f.sentence_variety],
           ["Reading grade", f.reading_grade],
           ["Contractions", f.contractions],
-          ["Adjectives", `${f.adjectives_per_sentence} / sentence`],
+          ["Adjectives / sentence", f.adjectives_per_sentence],
           ["Questions", f.questions],
           ["Paragraphs", f.paragraphs],
         ].map(([k, v]) => (
