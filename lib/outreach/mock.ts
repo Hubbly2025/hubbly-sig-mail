@@ -3,8 +3,8 @@
 // Delete nothing here when going live — flip NEXT_PUBLIC_OUTREACH_MOCK=0.
 
 import { lintEmail } from "./lint";
-import { presetTime } from "./message-time";
-import type { MessageInput, MessageResult, ScheduledMessage } from "./types";
+import { presetTime, localDateTime, toInstant } from "./message-time";
+import type { Availability, AvailabilitySlot, CalendarConnectUrl, CalendarProvider, WorkingHours, MessageInput, MessageResult, ScheduledMessage } from "./types";
 import { sampleLists, sampleListLeads } from "./list-samples";
 import { sampleDomains } from "./domain-samples";
 import { samplePipeline } from "./pipeline-samples";
@@ -68,6 +68,8 @@ const status: OutreachStatus = {
 const profiles: SenderProfile[] = [
   {
     id: "sp_vince",
+    calendar: { connected: true, provider: "google", email: "vince@tryhubbly.com" },
+    working_hours: { days: [0, 1, 2, 3, 4], start: "09:00", end: "17:00", buffer_minutes: 15, minimum_notice_hours: 24, meeting_length_minutes: 30 },
     name: "Vince R.",
     title: "Founder",
     company: "Hubbly",
@@ -77,6 +79,8 @@ const profiles: SenderProfile[] = [
   },
   {
     id: "sp_paul",
+    calendar: { connected: false },
+    working_hours: { days: [0, 1, 2, 3, 4], start: "09:00", end: "17:00", buffer_minutes: 15, minimum_notice_hours: 24, meeting_length_minutes: 30 },
     name: "Paul",
     title: "Head of Sales",
     company: "Hubbly",
@@ -85,6 +89,52 @@ const profiles: SenderProfile[] = [
     postal_address: "2021 Guadalupe St, Austin, TX 78705",
   },
 ];
+
+function validateWorkingHours(hours: WorkingHours) {
+  const time = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if (!hours || !Array.isArray(hours.days) || !hours.days.length || hours.days.some((d) => !Number.isInteger(d) || d < 0 || d > 6)
+    || !time.test(hours.start) || !time.test(hours.end) || hours.start >= hours.end
+    || !Number.isInteger(hours.buffer_minutes) || hours.buffer_minutes < 0 || hours.buffer_minutes > 120
+    || !Number.isInteger(hours.minimum_notice_hours) || hours.minimum_notice_hours < 0 || hours.minimum_notice_hours > 168
+    || !Number.isInteger(hours.meeting_length_minutes) || hours.meeting_length_minutes < 5 || hours.meeting_length_minutes > 240) {
+    throw new MockError(422, "Choose working days, an end after the start, a buffer of 0–120 minutes, notice of 0–168 hours, and a meeting length of 5–240 minutes.");
+  }
+  const minutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+  if (minutes(hours.end) - minutes(hours.start) < hours.meeting_length_minutes + 2 * hours.buffer_minutes) {
+    throw new MockError(422, "The meeting and its buffers must fit inside working hours.");
+  }
+}
+
+function availability(profile: SenderProfile): Availability {
+  const slots: AvailabilitySlot[] = [];
+  const h = profile.working_hours;
+  if (profile.calendar.connected) {
+    const minutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+    const today = new Date(`${localDateTime(new Date(), profile.timezone).slice(0, 10)}T00:00:00Z`);
+    const earliest = Date.now() + h.minimum_notice_hours * 3_600_000;
+    for (let day = 0; day < 14 && slots.length < 3; day++) {
+      const date = new Date(today);
+      date.setUTCDate(date.getUTCDate() + day);
+      if (!h.days.includes((date.getUTCDay() + 6) % 7)) continue;
+      for (let m = minutes(h.start) + h.buffer_minutes; m + h.meeting_length_minutes + h.buffer_minutes <= minutes(h.end) && slots.length < 3; m += h.meeting_length_minutes + h.buffer_minutes) {
+        // Sample calendar has a busy block from noon to 1 PM, including buffers.
+        if (m - h.buffer_minutes < 13 * 60 && m + h.meeting_length_minutes + h.buffer_minutes > 12 * 60) continue;
+        try {
+          const start = toInstant(`${date.toISOString().slice(0, 10)}T${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`, profile.timezone);
+          if (Date.parse(start) < earliest) continue;
+          slots.push({ start, end: new Date(Date.parse(start) + h.meeting_length_minutes * 60_000).toISOString() });
+        } catch { /* Skip past instants and nonexistent local times at DST boundaries. */ }
+      }
+    }
+  }
+  return clone({ sender_profile_id: profile.id, calendar: profile.calendar, slots });
+}
+
+function withAvailability(bundle: InboxBundle): InboxBundle {
+  const profile = profiles.find((p) => p.id === bundle.sender_profile_id);
+  const result = profile ? availability(profile) : { calendar: { connected: false } as const, slots: [] };
+  return clone({ ...bundle, calendar: result.calendar, draft: bundle.draft ? { ...bundle.draft, slots: bundle.status === "meeting_booked" ? [] : result.slots } : null });
+}
 
 const defaultFilter: AudienceFilter = { source: "signal_visitors", visited_page: "/pricing", min_visits: 2, email_type: "business" };
 
@@ -295,7 +345,11 @@ function bundle(
   const site = email.split("@")[1];
   const subject = "Re: Saw you on our pricing page";
   const thread_id = nid("thread");
+  const profile = profiles[campaign.includes("Agencies") || campaign.includes("Print houses") ? 1 : 0];
   return {
+    sender_profile_id: profile.id,
+    status: name === "Tom Becker" ? "meeting_booked" : "replied",
+    calendar: clone(profile.calendar),
     thread_id,
     contact_ref: `contact_${thread_id}`,
     timezone: "America/Chicago",
@@ -303,7 +357,7 @@ function bundle(
     campaign_name: campaign,
     reply: { id: nid("rep"), thread_id, from_name: name, from_email: email, company, received_at: received, classification: cls, first_line: reply.split("\n")[0] },
     thread: [msg("out", "Vince R. <vince@tryhubbly.com>", "Mon, Sep 21 · 9:12 AM", "Saw you on our pricing page", outFirst(name.split(" ")[0], site)), msg("in", `${name} <${email}>`, received, subject, reply)],
-    draft: draft ? { subject, body: draft, lint: lintEmail(subject, draft, false) } : null,
+    draft: draft ? { subject, body: draft, lint: lintEmail(subject, draft, false), slots: name === "Tom Becker" ? [] : availability(profile).slots } : null,
   };
 }
 
@@ -730,7 +784,7 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
 
   // approval inbox
   if (seg[0] === "inbox") {
-    if (M === "GET" && seg.length === 1) return q.get("count_only") === "true" ? { count: inbox.length } : clone(inbox);
+    if (M === "GET" && seg.length === 1) return q.get("count_only") === "true" ? { count: inbox.length } : inbox.map(withAvailability);
     if (M === "POST" && seg[1] === "replies") {
       const rid = seg[2];
       const i = inbox.findIndex((x) => x.reply.id === rid);
@@ -745,8 +799,8 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
         const subject = bx.thread[bx.thread.length - 1].subject;
         const text = `Hi ${first},\n\nHappy to. I'll run Hubbly on ${bx.reply.from_email.split("@")[1]} for 48 hours and send you the companies and people who visited.\n\nAnything in particular you want me to look for?\n\nVince`;
         bx.proposal_id = nid("prop");
-        bx.draft = { subject, body: text, lint: lintEmail(subject, text, false) };
-        return clone(bx);
+        bx.draft = { subject, body: text, lint: lintEmail(subject, text, false), slots: [] };
+        return withAvailability(bx);
       }
     }
     if (M === "POST") {
@@ -859,7 +913,7 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
         const page = Number(q.get("page") ?? 1);
         const size = 12;
         const total = c.enrolled_count;
-        const statuses: Enrollment["status"][] = ["active", "active", "active", "replied", "finished", "active", "bounced", "unsubscribed"];
+        const statuses: Enrollment["status"][] = ["active", "active", "active", "replied", "finished", "meeting_booked", "bounced", "unsubscribed"];
         const items: Enrollment[] = Array.from({ length: Math.min(size, Math.max(0, total - (page - 1) * size)) }, (_, i) => {
           const ld = leads[((page - 1) * size + i) % leads.length];
           const st = statuses[((page - 1) * size + i) % statuses.length];
@@ -1013,12 +1067,43 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
   }
 
   // settings
+  if (M === "GET" && path === "availability") {
+    const profile = profiles.find((p) => p.id === q.get("sender_profile_id"));
+    if (!profile) throw new MockError(404, "That sender profile was not found.");
+    return availability(profile);
+  }
   if (seg[0] === "sender-profiles") {
+    if (seg[2] === "calendar" || seg[2] === "availability") {
+      const profile = profiles.find((p) => p.id === seg[1]);
+      if (!profile) throw new MockError(404, "That sender profile was not found.");
+      if (M === "GET" && seg[2] === "availability") return availability(profile);
+      if (M === "GET" && (!seg[3] || seg[3] === "status")) return clone(profile.calendar);
+      if ((M === "POST" || M === "GET") && seg[3] === "connect-url") {
+        const provider = b.provider ?? q.get("provider");
+        if (provider !== "google" && provider !== "microsoft") throw new MockError(422, "Choose Google or Microsoft.");
+        // Local mock URL only: no OAuth navigation or external account access.
+        return { url: `outreach/sender-profiles/${profile.id}/calendar/connect?provider=${provider}` } satisfies CalendarConnectUrl;
+      }
+      if (M === "POST" && seg[3] === "connect") {
+        const provider = q.get("provider") as CalendarProvider;
+        if (provider !== "google" && provider !== "microsoft") throw new MockError(422, "Choose Google or Microsoft.");
+        profile.calendar = { connected: true, provider, email: `${profile.name.split(" ")[0].toLowerCase()}@tryhubbly.com` };
+        return clone(profile.calendar);
+      }
+      if (M === "DELETE" || (M === "POST" && seg[3] === "disconnect")) {
+        profile.calendar = { connected: false };
+        return clone(profile.calendar);
+      }
+      throw new MockError(404, "Calendar action not found.");
+    }
     if (M === "GET") return clone(profiles);
-    const data = b as Partial<SenderProfile>;
+    const data = { ...b } as Partial<SenderProfile>;
+    delete data.calendar;
+    delete data.id;
+    if (data.working_hours !== undefined) validateWorkingHours(data.working_hours);
     if (!String(data.postal_address ?? (seg[1] ? "x" : "")).trim()) throw new MockError(422, "A postal address is required by law — a profile without one can never send.");
     if (M === "POST") {
-      const p: SenderProfile = { id: nid("sp"), name: "", title: "", company: "", booking_link: "", timezone: "America/Chicago", postal_address: "", ...data } as SenderProfile;
+      const p: SenderProfile = { id: nid("sp"), name: "", title: "", company: "", booking_link: "", timezone: "America/Chicago", postal_address: "", calendar: { connected: false }, working_hours: { days: [0, 1, 2, 3, 4], start: "09:00", end: "17:00", buffer_minutes: 15, minimum_notice_hours: 24, meeting_length_minutes: 30 }, ...data };
       profiles.push(p);
       return clone(p);
     }

@@ -164,7 +164,7 @@ export interface Page<T> {
   page_size: number;
 }
 
-export type EnrollmentStatus = "active" | "replied" | "finished" | "bounced" | "unsubscribed" | "paused";
+export type EnrollmentStatus = "active" | "replied" | "finished" | "bounced" | "unsubscribed" | "paused" | "meeting_booked";
 
 export interface Enrollment {
   contact_ref: string;
@@ -250,6 +250,9 @@ export interface Message {
 }
 
 export interface InboxBundle {
+  sender_profile_id: string;
+  status: "replied" | "meeting_booked";
+  calendar: CalendarStatus;
   thread_id: string;
   contact_ref: string;
   timezone: string;
@@ -267,7 +270,7 @@ export interface InboxBundle {
     first_line: string;
   };
   thread: Message[];
-  draft: { subject: string; body: string; lint: LintReport } | null;
+  draft: { subject: string; body: string; lint: LintReport; slots: AvailabilitySlot[] } | null;
 }
 
 export interface ReplyRow {
@@ -334,7 +337,28 @@ export interface SentRow {
 
 /* ---------- Settings ---------- */
 
+export type CalendarProvider = "google" | "microsoft";
+export type CalendarStatus = { connected: false } | { connected: true; provider: CalendarProvider; email: string };
+export interface CalendarConnectUrl { url: string }
+export interface WorkingHours {
+  /** 0 = Monday … 6 = Sunday; times use the sender profile timezone. */
+  days: number[];
+  start: string;
+  end: string;
+  buffer_minutes: number;
+  minimum_notice_hours: number;
+  meeting_length_minutes: number;
+}
+export interface AvailabilitySlot { start: string; end: string }
+export interface Availability {
+  sender_profile_id: string;
+  calendar: CalendarStatus;
+  slots: AvailabilitySlot[];
+}
+
 export interface SenderProfile {
+  calendar: CalendarStatus;
+  working_hours: WorkingHours;
   id: string;
   name: string;
   title: string;

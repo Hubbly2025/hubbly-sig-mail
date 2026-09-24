@@ -11,6 +11,7 @@ const st: Record<EnrollmentStatus, { label: string; tone: Tone }> = {
   active: { label: "Active", tone: "success" },
   paused: { label: "Paused", tone: "warn" },
   replied: { label: "Replied", tone: "accent" },
+  meeting_booked: { label: "Meeting booked", tone: "success" },
   finished: { label: "Finished", tone: "neutral" },
   bounced: { label: "Bounced", tone: "danger" },
   unsubscribed: { label: "Unsubscribed", tone: "danger" },

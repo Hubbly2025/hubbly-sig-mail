@@ -8,6 +8,7 @@ import { RulesPanel } from "@/components/outreach/RulesPanel";
 import { EmailLeadButton } from "@/components/outreach/MessageComposer";
 import { classification } from "@/components/outreach/format";
 import { api } from "@/lib/outreach/client";
+import { formatSendTime } from "@/lib/outreach/message-time";
 import { useResource } from "@/lib/outreach/hooks";
 import type { InboxBundle } from "@/lib/outreach/types";
 
@@ -136,6 +137,7 @@ export default function ApprovalInbox() {
                         <StatusPill tone={cl.tone} className="!min-h-[22px] !text-xs !px-2">
                           {cl.label}
                         </StatusPill>
+                        {b.status === "meeting_booked" && <StatusPill tone="success" className="!min-h-[22px] !text-xs !px-2">Meeting booked</StatusPill>}
                         {!b.draft && <span className="text-xs font-medium text-warn">No draft</span>}
                       </span>
                     </button>
@@ -151,12 +153,13 @@ export default function ApprovalInbox() {
             q.loading ? <Skel className="h-[300px] w-full rounded-card" /> : <div className="m-auto text-muted">Pick a reply on the left.</div>
           ) : (
             <>
-              <div className="flex items-baseline gap-3">
+              <div className="flex flex-wrap items-baseline gap-3">
                 <h2 className="m-0 text-lg font-semibold">
                   {sel.reply.from_name}
                   {sel.reply.company ? ` · ${sel.reply.company}` : ""}
                 </h2>
                 <span className="text-meta text-muted">{sel.campaign_name}</span>
+                {sel.status === "meeting_booked" && <StatusPill tone="success">Meeting booked</StatusPill>}
                 <EmailLeadButton key={sel.contact_ref} contact_ref={sel.contact_ref} name={sel.reply.from_name} email={sel.reply.from_email} timezone={sel.timezone} />
               </div>
               {sel.thread.map((m) => (
@@ -181,6 +184,24 @@ export default function ApprovalInbox() {
                       className="min-h-[170px] p-3.5 rounded-control border border-control text-[14px] leading-relaxed font-sans"
                     />
                   </label>
+                  {!sel.calendar.connected ? <p className="m-0 text-meta text-muted">Connect a calendar to offer real times</p> : sel.draft.slots.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <span className="text-meta text-muted">Suggested times · {sel.timezone} · Sample availability</span>
+                      <div role="group" aria-label="Suggested meeting times" className="flex flex-wrap gap-2">
+                        {sel.draft.slots.map((slot) => {
+                          const label = formatSendTime(slot.start, sel.timezone);
+                          return <Button key={slot.start} small disabled={!canApprove || busy} onClick={() => {
+                            const editor = editorRef.current;
+                            const start = editor?.selectionStart ?? body.length;
+                            const end = editor?.selectionEnd ?? body.length;
+                            const inserted = `${start > 0 && !/\s/.test(body[start - 1]) ? " " : ""}${label}${end < body.length && !/[\s.,!?;:]/.test(body[end]) ? " " : ""}`;
+                            setEdits((current) => ({ ...current, [sel.reply.id]: `${body.slice(0, start)}${inserted}${body.slice(end)}` }));
+                            requestAnimationFrame(() => { editor?.focus(); editor?.setSelectionRange(start + inserted.length, start + inserted.length); });
+                          }}>{label}</Button>;
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <RulesPanel subject={sel.draft.subject} body={body} first={false} initial={sel.draft.lint} />
                   {canApprove && (
                     <div className="flex items-center gap-2">

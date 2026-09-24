@@ -6,12 +6,13 @@ import { Toggle } from "@/components/ui-hubbly/controls";
 import { Dialog, Panel, useToast } from "@/components/outreach/feedback";
 import { PageHeader, useCan, useStatus } from "@/components/outreach/shell";
 import { api } from "@/lib/outreach/client";
+import { ProfileCalendar } from "@/components/outreach/ProfileCalendar";
 import { useResource } from "@/lib/outreach/hooks";
 import type { OutreachSettings, SenderProfile, Suppression } from "@/lib/outreach/types";
 
 const input = "min-h-10 px-3 rounded-control border border-control bg-surface text-sm text-ink";
 const lbl = "flex flex-col gap-1.5 text-meta text-muted";
-const EMPTY: Omit<SenderProfile, "id"> = { name: "", title: "", company: "", booking_link: "", timezone: "America/Chicago", postal_address: "" };
+const EMPTY: Omit<SenderProfile, "id"> = { name: "", title: "", company: "", booking_link: "", timezone: "America/Chicago", postal_address: "", calendar: { connected: false }, working_hours: { days: [0, 1, 2, 3, 4], start: "09:00", end: "17:00", buffer_minutes: 15, minimum_notice_hours: 24, meeting_length_minutes: 30 } };
 const TZ = ["America/New_York", "America/Chicago", "America/Denver", "America/Phoenix", "America/Los_Angeles", "America/Toronto", "Europe/London"];
 
 const CONSENT =
@@ -157,6 +158,7 @@ export default function SettingsPage() {
                         </>
                       )}
                     </span>
+                    <ProfileCalendar key={`${p.id}:${JSON.stringify(p.working_hours)}:${p.calendar.connected}`} profile={p} canManage={canManage} onSaved={profiles.reload} />
                   </div>
                   {canManage && (
                     <Button small onClick={() => setEditing(p)}>
