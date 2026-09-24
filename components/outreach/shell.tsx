@@ -148,7 +148,7 @@ export function OutreachShell({ children }: { children: ReactNode }) {
   return (
     <ToastProvider>
       <StatusCtx.Provider value={status.data ?? null}>
-        <div className="flex min-h-screen bg-bg">
+        <div className="flex min-h-screen min-w-[1440px] bg-bg">
           <Sidebar status={status.data} />
           <main className="flex-1 min-w-0 flex flex-col h-screen overflow-y-auto">
             {status.loading ? (

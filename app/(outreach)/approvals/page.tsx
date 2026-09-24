@@ -168,7 +168,7 @@ export default function ApprovalInbox() {
               ))}
 
               {sel.draft ? (
-                <Panel title="Your reply" className="border-accent border-[1.5px]" bodyClassName="px-5 pb-5 flex flex-col gap-3">
+                <Panel title="Your reply" bodyClassName="px-5 pb-5 flex flex-col gap-3">
                   <label className="flex flex-col gap-1.5">
                     <span className="sr-only">Reply</span>
                     <textarea

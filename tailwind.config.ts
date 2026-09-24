@@ -35,8 +35,8 @@ const config: Config = {
         tag: v("tag"),
       },
       fontFamily: {
-        sans: ["-apple-system", "BlinkMacSystemFont", "system-ui", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "sans-serif"],
-        mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", "monospace"],
+        sans: ["var(--font-ui)", "sans-serif"],
+        mono: ["var(--font-code)", "monospace"],
       },
       fontSize: {
         meta: ["12.5px", { lineHeight: "1.45" }],

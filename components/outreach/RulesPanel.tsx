@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { cx } from "@/components/ui-hubbly";
+import { IconWarn } from "@/components/ui-hubbly/icons";
 import { api } from "@/lib/outreach/client";
 import { useDebounced } from "@/lib/outreach/hooks";
 import type { LintReport } from "@/lib/outreach/types";
@@ -55,7 +56,7 @@ export function RulesPanel({ subject, body, first, initial }: { subject: string;
         ))}
         {report.suggestions.map((p, i) => (
           <li key={`s${i}`} className="flex items-start gap-2 text-[13px] text-warn">
-            <span aria-hidden>⚠</span>
+            <IconWarn size={12} className="mt-1 shrink-0" />
             <span className="sr-only">Suggestion:</span>
             <span className="flex-1">{p.text}</span>
             {p.where === "subject" && <span className="px-1.5 rounded bg-warn-bg text-[11px] font-semibold">subject</span>}
@@ -73,7 +74,7 @@ export function RulesPanel({ subject, body, first, initial }: { subject: string;
           ["Paragraphs", f.paragraphs],
         ].map(([k, v]) => (
           <div key={String(k)} className="flex flex-col">
-            <dt className="text-muted">{k}</dt>
+            <dt className="text-muted">{k === "Adjectives / sentence" ? <>Adjectives /<br />sentence</> : k}</dt>
             <dd className="m-0 font-semibold text-ink tabular">{v}</dd>
           </div>
         ))}
