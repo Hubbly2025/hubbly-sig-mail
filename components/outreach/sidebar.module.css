@@ -1,0 +1,176 @@
+.sidebar {
+  --nav-bg: #0b1c50;
+  --nav-text: #b8c4e0;
+  --nav-muted: #9baacf;
+  --nav-line: #2b3c69;
+  --nav-active: #2a4fb2;
+  --nav-highlight: #55a7ff;
+  width: 244px;
+  height: 100dvh;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--nav-bg);
+  color: var(--nav-text);
+  border-right: 1px solid var(--nav-line);
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 14px;
+}
+
+.brand {
+  height: 56px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--nav-line);
+}
+
+.brandIcon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--nav-line);
+  border-radius: 6px;
+  background: #14265a;
+  color: var(--nav-highlight);
+}
+
+.wordmark {
+  color: #fff;
+  font-family: var(--font-code);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 1.4px;
+  white-space: nowrap;
+}
+
+.wordmark span { color: var(--nav-highlight); }
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 12px 0;
+  padding: 0 8px;
+  min-height: 32px;
+  border: 1px solid var(--nav-line);
+  border-radius: 6px;
+  background: #14265a;
+  color: var(--nav-muted);
+}
+
+.search:focus-within { outline: 2px solid var(--nav-highlight); outline-offset: 2px; }
+.search > svg { flex-shrink: 0; }
+.search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.search input::placeholder { color: #adbcda; opacity: 1; }
+.search kbd { font-family: var(--font-code); font-size: 10px; white-space: nowrap; }
+
+.navigation {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 12px 12px;
+  scrollbar-color: var(--nav-line) var(--nav-bg);
+  scrollbar-width: thin;
+}
+.group + .group { margin-top: 24px; }
+.groupLabel {
+  padding: 0 8px 8px;
+  font-family: var(--font-code);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 400;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--nav-muted);
+}
+.sidebar .item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  margin-bottom: 3px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--nav-text);
+  text-decoration: none;
+  font-weight: 400;
+}
+.item > svg { flex-shrink: 0; }
+.itemLabel { flex: 1; }
+.sidebar .item:hover { background: #182f67; color: #fff; }
+.sidebar .item:focus-visible { outline: 2px solid var(--nav-highlight); outline-offset: 2px; }
+.sidebar .active, .sidebar .active:hover { background: var(--nav-active); color: #fff; }
+.active::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  background: var(--nav-highlight);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #2a4fb2;
+  color: #fff;
+  font-size: 11px;
+}
+.active .badge { background: #fff; color: #1e3b8b; }
+.group.settings { margin-top: auto; padding-top: 24px; }
+.empty { padding: 8px; color: var(--nav-text); font-size: 12px; }
+.sample {
+  margin: 0 12px 12px;
+  padding: 6px 8px;
+  border: 1px solid #454d61;
+  border-radius: 5px;
+  background: #202d49;
+  color: #f3ce8a;
+  font-size: 11px;
+  line-height: 16px;
+}
+.profile {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 56px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--nav-line);
+}
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--nav-highlight);
+  color: #0b1c50;
+  font-family: var(--font-code);
+  font-size: 12px;
+}
+.profileText { display: flex; flex-direction: column; gap: 1px; min-width: 0; color: #fff; font-size: 12px; }
+.workspace { font-family: var(--font-code); font-size: 10px; color: #c3cee7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

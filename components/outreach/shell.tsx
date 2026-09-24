@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { createContext, useContext, useEffect, type ReactNode } from "react";
-import { Avatar, CountBadge, cx } from "@/components/ui-hubbly";
-import { IconChat, IconChevronDown, IconGrid, IconLock, IconMail, IconPerson, IconSend, IconSignal, IconList } from "@/components/ui-hubbly/icons";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { cx } from "@/components/ui-hubbly";
+import { IconChat, IconGrid, IconLock, IconMail, IconPerson, IconSend, IconSignal, IconPlug, IconSearch } from "@/components/ui-hubbly/icons";
+import styles from "./sidebar.module.css";
 import { useResource } from "@/lib/outreach/hooks";
 import { BRAND, brandInfo } from "@/lib/outreach/brand";
 import { MOCK } from "@/lib/outreach/client";
@@ -24,8 +25,6 @@ export function useStatus() {
 }
 
 /* ---------- Sidebar ---------- */
-
-const itemClass = "flex items-center gap-2.5 min-h-9 px-2.5 rounded-lg no-underline text-ink-2 hover:bg-active hover:text-ink";
 
 function IconGear() {
   return (
@@ -48,6 +47,8 @@ function IconCheckInbox() {
 function Sidebar({ status }: { status: OutreachStatus | undefined }) {
   const pathname = usePathname();
   const brand = brandInfo[BRAND];
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
   const badge = useResource<InboxCount>(status?.enabled ? "outreach/inbox?count_only=true" : null, { every: 60_000 });
   const locked = status && !status.enabled;
   useEffect(() => {
@@ -55,71 +56,80 @@ function Sidebar({ status }: { status: OutreachStatus | undefined }) {
     window.addEventListener("outreach:inbox-changed", on);
     return () => window.removeEventListener("outreach:inbox-changed", on);
   }, [badge]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
+      if (event.key === "Escape" && document.activeElement === searchRef.current) {
+        setQuery("");
+        searchRef.current?.blur();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
-  const items = [
-    { href: "/approvals", label: "Approval inbox", icon: <IconCheckInbox />, badge: badge.data?.count },
-    { href: "/campaigns", label: "Campaigns", icon: <IconSend /> },
-    { href: "/mailboxes", label: "Mailboxes", icon: <IconMail /> },
-    { href: "/inbox", label: "Inbox", icon: <IconChat /> },
-    { href: "/settings", label: "Outreach settings", icon: <IconGear /> },
+  const groups = [
+    { label: "Workspace", items: [
+      { href: brand.hostDashboard, label: "Dashboard", icon: <IconGrid />, host: true },
+      { href: brand.hostLeads, label: "Leads", icon: <IconPerson />, host: true },
+    ] },
+    { label: "Outreach", items: [
+      { href: "/approvals", label: "Approval inbox", icon: <IconCheckInbox />, badge: badge.data?.count },
+      { href: "/campaigns", label: "Campaigns", icon: <IconSend /> },
+      { href: "/mailboxes", label: "Mailboxes", icon: <IconMail /> },
+      { href: "/inbox", label: "Inbox", icon: <IconChat /> },
+    ] },
+    { label: "Signal", items: [
+      { href: "/pixel", label: "Pixel & Setup", icon: <IconSignal />, host: true },
+      { href: "/integrations", label: "Integrations", icon: <IconPlug />, host: true },
+    ] },
+    { label: "Settings", items: [
+      { href: "/settings", label: "Outreach settings", icon: <IconGear /> },
+    ] },
   ];
+  const filtered = groups.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => item.label.toLowerCase().includes(query.trim().toLowerCase())),
+  }));
 
   return (
-    <nav aria-label={brand.name} className="w-[244px] shrink-0 h-screen box-border px-3 py-[18px] bg-sidebar border-r border-line flex flex-col gap-0.5">
-      <div className="flex items-center gap-2.5 px-2.5 pt-1 pb-4">
-        <div className="w-7 h-7 rounded-lg bg-accent text-white flex items-center justify-center">
-          <IconSignal size={16} strokeWidth={2} />
-        </div>
-        <div className="font-semibold text-[15px]">{brand.name}</div>
+    <nav aria-label={brand.name} className={styles.sidebar}>
+      <div className={styles.brand}>
+        <span className={styles.brandIcon}><IconSignal size={17} /></span>
+        <span className={styles.wordmark}>{BRAND === "signal" ? <>HUBBLY<span>SIGNAL</span></> : brand.name}</span>
       </div>
-
-      <button type="button" className="flex items-center justify-between mb-3 min-h-11 px-3 border border-line rounded-control bg-surface text-ink text-left cursor-pointer">
-        <span className="flex flex-col min-w-0">
-          <span className="text-[13px] font-semibold truncate">{status?.workspace_name ?? "…"}</span>
-          <span className="text-[11.5px] text-muted">{status?.role ?? ""}</span>
-        </span>
-        <IconChevronDown size={14} />
-      </button>
-
-      <a href={brand.hostDashboard} className={itemClass}>
-        <IconGrid />
-        Dashboard
-      </a>
-      <a href={brand.hostLeads} className={itemClass}>
-        <IconPerson />
-        Identified visitors
-      </a>
-
-      <div className="px-2.5 pt-4 pb-1.5 text-[11.5px] font-semibold tracking-[0.06em] text-label">OUTREACH</div>
-      {items.map((it) => {
-        const active = pathname.startsWith(it.href);
-        return (
-          <Link key={it.href} href={it.href} aria-current={active ? "page" : undefined} className={cx(itemClass, active && "bg-active text-ink font-semibold")}>
-            {it.icon}
-            <span className="flex-1">{it.label}</span>
-            {locked ? <IconLock size={14} /> : it.badge ? <CountBadge>{it.badge}</CountBadge> : null}
-          </Link>
-        );
-      })}
-
-      <div className="px-2.5 pt-4 pb-1.5 text-[11.5px] font-semibold tracking-[0.06em] text-label">SIGNAL</div>
-      <a href="/pixel" className={itemClass}>
-        <IconSignal />
-        Pixel &amp; setup
-      </a>
-      <a href="/integrations" className={itemClass}>
-        <IconList />
-        Integrations
-      </a>
-
-      <div className="mt-auto flex flex-col gap-2">
-        {MOCK && <div className="mx-2.5 px-2.5 py-1.5 rounded-md bg-warn-bg text-warn text-[11.5px] font-medium">Sample data — not connected</div>}
-        <div className="flex items-center gap-2.5 p-2.5 border-t border-line">
-          <Avatar initials={(status?.user_name ?? "…").split(" ").map((x) => x[0]).join("").slice(0, 2)} />
-          <div className="flex flex-col">
-            <span className="text-[13px] font-semibold">{status?.user_name ?? ""}</span>
-            <span className="text-xs text-muted">Settings · Support</span>
+      <div className={styles.search}>
+        <IconSearch size={16} />
+        <input ref={searchRef} type="search" aria-label="Search navigation" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <kbd aria-hidden="true">⌘K</kbd>
+      </div>
+      <div className={styles.navigation}>
+        {filtered.map((group) => group.items.length > 0 && (
+          <div key={group.label} className={cx(styles.group, group.label === "Settings" && styles.settings)}>
+            <div className={styles.groupLabel}>{group.label}</div>
+            {group.items.map((item) => {
+              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+              const content = <>{item.icon}<span className={styles.itemLabel}>{item.label}</span>{locked && group.label === "Outreach" ? <IconLock size={14} /> : "badge" in item && !!item.badge ? <span className={styles.badge}>{item.badge}</span> : null}</>;
+              const className = cx(styles.item, active && styles.active);
+              return "host" in item ? (
+                <a key={item.href} href={item.href} className={className} aria-current={active ? "page" : undefined}>{content}</a>
+              ) : (
+                <Link key={item.href} href={item.href} className={className} aria-current={active ? "page" : undefined} onClick={() => setQuery("")}>{content}</Link>
+              );
+            })}
           </div>
+        ))}
+        {!filtered.some((group) => group.items.length) && <p role="status" className={styles.empty}>No matching pages.</p>}
+      </div>
+      {MOCK && <div className={styles.sample}>Sample data — not connected</div>}
+      <div className={styles.profile}>
+        <span className={styles.avatar} aria-hidden="true">{(status?.user_name ?? "…").split(" ").map((part) => part[0]).join("").slice(0, 2)}</span>
+        <div className={styles.profileText}>
+          <span>{status?.user_name ?? ""}</span>
+          <span className={styles.workspace} title={status?.workspace_name}>{status?.workspace_name ?? ""}{status?.role ? ` · ${status.role}` : ""}</span>
         </div>
       </div>
     </nav>
