@@ -3,6 +3,8 @@
 // Delete nothing here when going live — flip NEXT_PUBLIC_OUTREACH_MOCK=0.
 
 import { lintEmail } from "./lint";
+import { presetTime } from "./message-time";
+import type { MessageInput, MessageResult, ScheduledMessage } from "./types";
 import { sampleLists, sampleListLeads } from "./list-samples";
 import { sampleDomains } from "./domain-samples";
 import { samplePipeline } from "./pipeline-samples";
@@ -292,10 +294,14 @@ function bundle(
 ): InboxBundle {
   const site = email.split("@")[1];
   const subject = "Re: Saw you on our pricing page";
+  const thread_id = nid("thread");
   return {
+    thread_id,
+    contact_ref: `contact_${thread_id}`,
+    timezone: "America/Chicago",
     proposal_id: draft ? nid("prop") : null,
     campaign_name: campaign,
-    reply: { id: nid("rep"), from_name: name, from_email: email, company, received_at: received, classification: cls, first_line: reply.split("\n")[0] },
+    reply: { id: nid("rep"), thread_id, from_name: name, from_email: email, company, received_at: received, classification: cls, first_line: reply.split("\n")[0] },
     thread: [msg("out", "Vince R. <vince@tryhubbly.com>", "Mon, Sep 21 · 9:12 AM", "Saw you on our pricing page", outFirst(name.split(" ")[0], site)), msg("in", `${name} <${email}>`, received, subject, reply)],
     draft: draft ? { subject, body: draft, lint: lintEmail(subject, draft, false) } : null,
   };
@@ -367,6 +373,9 @@ const CLS: Classification[] = ["meeting", "interested", "question", "objection",
 let replies: ReplyRow[] = [
   ...inbox.map((b) => ({
     id: b.reply.id,
+    thread_id: b.thread_id,
+    contact_ref: b.contact_ref,
+    timezone: b.timezone,
     from_name: b.reply.from_name,
     from_email: b.reply.from_email,
     subject: b.thread[1].subject,
@@ -400,8 +409,12 @@ let replies: ReplyRow[] = [
         : "Interesting — tell me more.";
     const email = `${f.toLowerCase()}@${co.toLowerCase().replace(/[^a-z]/g, "").slice(0, 14)}.com`;
     const when = `${i + 1} day${i ? "s" : ""} ago`;
+    const thread_id = nid("thread");
     return {
       id: nid("rep"),
+      thread_id,
+      contact_ref: `contact_${thread_id}`,
+      timezone: i % 2 ? "America/New_York" : "America/Chicago",
       from_name: `${f} ${l}`,
       from_email: email,
       subject: "Re: Saw you on our pricing page",
@@ -423,6 +436,9 @@ const sent: SentRow[] = Array.from({ length: 40 }, (_, i) => {
   const body = s.body.replace(/\{first_name\}/g, f).replace(/\{company\}/g, co).replace(/\{website\}/g, email.split("@")[1]);
   return {
     id: nid("snt"),
+    thread_id: `sent_thread_${i}`,
+    contact_ref: `sent_contact_${i}`,
+    timezone: i % 2 ? "America/Los_Angeles" : "America/Chicago",
     to: `${f} <${email}>`,
     subject: s.subject,
     snippet: body.split("\n").filter(Boolean)[1] ?? "",
@@ -445,6 +461,67 @@ let suppression: Suppression[] = [
   { id: nid("sup"), email: "legal@mendellaw.com", reason: "Added by hand", scope: "workspace", campaign_name: null, added_at: "Sep 12" },
   { id: nid("sup"), email: "jordan@lonestarmotors.com", reason: "Replied not interested", scope: "campaign", campaign_name: "Pricing-page visitors — 48h follow-up", added_at: "Sep 9" },
 ];
+
+type Recipient = { contact_ref: string; thread_id: string; name: string; email: string; timezone: string; campaign_name: string; blocked: string | null };
+const recipients = new Map<string, Recipient>([
+  ...replies.map((row): [string, Recipient] => [row.contact_ref, {
+    contact_ref: row.contact_ref, thread_id: row.thread_id, name: row.from_name, email: row.from_email,
+    timezone: row.timezone, campaign_name: row.campaign_name,
+    blocked: row.classification === "unsubscribe" ? "This lead opted out. No email was sent." : null,
+  }]),
+  ...sent.map((row): [string, Recipient] => [row.contact_ref, {
+    contact_ref: row.contact_ref, thread_id: row.thread_id, name: row.to.split(" <")[0],
+    email: row.to.match(/<([^>]+)>/)?.[1] ?? row.to, timezone: row.timezone,
+    campaign_name: row.campaign_name, blocked: row.delivery === "bounced" ? "This address is invalid. No email was sent." : null,
+  }]),
+  ...leads.map((lead, index): [string, Recipient] => [lead.id, {
+    contact_ref: lead.id, thread_id: `lead_thread_${lead.id}`, name: lead.name, email: lead.email,
+    timezone: lead.country === "UK" ? "Europe/London" : "America/Chicago", campaign_name: "One-to-one email",
+    blocked: lead.suppressed || index % 8 === 7 ? "This lead opted out. No email was sent."
+      : !lead.mailbox_ok || index % 8 === 6 ? "This address is invalid. No email was sent."
+      : index % 11 === 10 ? "This address is risky. No email was sent." : null,
+  }]),
+]);
+
+function getRecipient(ref: string) {
+  const recipient = recipients.get(ref);
+  if (!recipient) throw new MockError(404, "This lead was not found.");
+  const suppressed = suppression.find((item) => item.email === recipient.email);
+  if (recipient.blocked || suppressed) throw new MockError(409, recipient.blocked ?? `This lead is on the opt-out list: ${suppressed!.reason}. No email was sent.`);
+  return recipient;
+}
+
+function validateMessage(input: MessageInput, first: boolean) {
+  const lint = lintEmail(input.subject, input.body, first);
+  if (!input.subject.trim()) lint.problems.unshift({ text: "Add a subject.", where: "subject" });
+  if (!input.body.trim()) lint.problems.unshift({ text: "Write a message.", where: "body" });
+  if (lint.problems.length) throw new MockError(422, lint.problems.map((problem) => problem.text).join("\n"));
+  if (input.send_at !== undefined && (!Number.isFinite(Date.parse(input.send_at)) || Date.parse(input.send_at) <= Date.now())) {
+    throw new MockError(422, "Choose a send time in the future.");
+  }
+}
+
+function threadMessages(threadId: string): Message[] {
+  return replies.find((row) => row.thread_id === threadId)?.thread
+    ?? sent.find((row) => row.thread_id === threadId)?.thread ?? [];
+}
+
+function sendSample(recipient: Recipient, input: MessageInput): MessageResult {
+  const message = msg("out", "Vince R. <vince@tryhubbly.com>", "Just now", input.subject, input.body);
+  const thread = [...threadMessages(recipient.thread_id), message];
+  [...replies, ...sent, ...inbox].forEach((row) => { if (row.thread_id === recipient.thread_id) row.thread = thread; });
+  sent.unshift({ id: nid("snt"), thread_id: recipient.thread_id, contact_ref: recipient.contact_ref,
+    timezone: recipient.timezone, to: `${recipient.name} <${recipient.email}>`, subject: input.subject,
+    snippet: input.body.slice(0, 140), sent_at: "Just now", delivery: "delivered", campaign_name: recipient.campaign_name, thread });
+  return clone({ status: "sent", thread_id: recipient.thread_id, thread });
+}
+
+const scheduled: ScheduledMessage[] = inbox.slice(0, 2).map((row) => ({
+  id: nid("scheduled"), kind: "reply", thread_id: row.thread_id, contact_ref: row.contact_ref,
+  to_name: row.reply.from_name, to_email: row.reply.from_email, timezone: row.timezone,
+  campaign_name: row.campaign_name, subject: row.draft!.subject, body: row.draft!.body,
+  send_at: presetTime("tomorrow", row.timezone),
+}));
 
 /* ---------- derived ---------- */
 
@@ -612,6 +689,42 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
 
   if (M === "GET" && path === "pipeline") return clone(samplePipeline);
 
+  if (M === "POST" && ((seg[0] === "threads" && seg[2] === "reply") || (seg[0] === "leads" && seg[2] === "messages"))) {
+    const isReply = seg[0] === "threads";
+    const ref = isReply ? [...recipients.values()].find((item) => item.thread_id === seg[1])?.contact_ref : seg[1];
+    const recipient = getRecipient(ref ?? "");
+    const input: MessageInput = { subject: String(b.subject ?? ""), body: String(b.body ?? ""), ...(b.send_at !== undefined ? { send_at: String(b.send_at) } : {}) };
+    validateMessage(input, !isReply);
+    if (input.send_at) {
+      scheduled.unshift({ ...input, kind: isReply ? "reply" : "message", send_at: input.send_at, id: nid("scheduled"), thread_id: recipient.thread_id,
+        contact_ref: recipient.contact_ref, to_name: recipient.name, to_email: recipient.email,
+        timezone: recipient.timezone, campaign_name: recipient.campaign_name });
+      return clone({ status: "scheduled", thread_id: recipient.thread_id, thread: threadMessages(recipient.thread_id) } satisfies MessageResult);
+    }
+    return sendSample(recipient, input);
+  }
+  if (seg[0] === "scheduled") {
+    if (M === "GET") {
+      const page = Math.max(1, Number(q.get("page")) || 1);
+      const search = (q.get("q") ?? "").toLowerCase();
+      const rows = scheduled.filter((item) => `${item.to_name} ${item.to_email} ${item.subject} ${item.body}`.toLowerCase().includes(search))
+        .sort((a, z) => Date.parse(a.send_at) - Date.parse(z.send_at));
+      return clone({ items: rows.slice((page - 1) * 12, page * 12), total: rows.length, page, page_size: 12 });
+    }
+    const index = scheduled.findIndex((item) => item.id === (seg[1] ?? b.id ?? q.get("id")));
+    if (index < 0) throw new MockError(404, "This scheduled email no longer exists.");
+    if (M === "DELETE") { scheduled.splice(index, 1); return { ok: true }; }
+    if (M === "PATCH") {
+      const row = scheduled[index];
+      getRecipient(row.contact_ref);
+      const next = { ...row, subject: b.subject !== undefined ? String(b.subject) : row.subject,
+        body: b.body !== undefined ? String(b.body) : row.body, send_at: b.send_at !== undefined ? String(b.send_at) : row.send_at };
+      validateMessage(next, row.kind === "message");
+      scheduled[index] = next;
+      return clone(next);
+    }
+  }
+
   // every page
   if (M === "GET" && path === "status") return clone(status);
 
@@ -751,7 +864,7 @@ export async function handleMock(method: string, rawPath: string, body?: unknown
           const ld = leads[((page - 1) * size + i) % leads.length];
           const st = statuses[((page - 1) * size + i) % statuses.length];
           const stp = st === "finished" ? c.steps.length : Math.min(c.steps.length, 1 + (((page - 1) * size + i) % Math.max(1, c.steps.length)));
-          return { lead_id: ld.id, name: ld.name, email: ld.email, status: c.status === "paused" && st === "active" ? "paused" : st, step: stp, next_due: st === "active" ? pick(["Today 2:10 PM", "Tomorrow 9:40 AM", "Fri 10:15 AM", "Mon 9:05 AM"]) : null };
+          return { contact_ref: ld.id, timezone: ld.country === "UK" ? "Europe/London" : "America/Chicago", lead_id: ld.id, name: ld.name, email: ld.email, status: c.status === "paused" && st === "active" ? "paused" : st, step: stp, next_due: st === "active" ? pick(["Today 2:10 PM", "Tomorrow 9:40 AM", "Fri 10:15 AM", "Mon 9:05 AM"]) : null };
         });
         return { items, total, page, page_size: size } satisfies Page<Enrollment>;
       }

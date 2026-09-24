@@ -8,10 +8,12 @@ import { Dialog, Pager, Panel, useToast } from "@/components/outreach/feedback";
 import { PageHeader } from "@/components/outreach/shell";
 import { classification } from "@/components/outreach/format";
 import { api } from "@/lib/outreach/client";
+import { MessageEditor } from "@/components/outreach/MessageComposer";
+import { ScheduledInbox } from "@/components/outreach/ScheduledInbox";
 import { useDebounced, useResource } from "@/lib/outreach/hooks";
 import type { Classification, Message, Page, ReplyRow, SentRow } from "@/lib/outreach/types";
 
-type View = "replies" | "sent";
+type View = "replies" | "sent" | "scheduled";
 type Open = { kind: "reply"; row: ReplyRow } | { kind: "sent"; row: SentRow } | null;
 
 const delivery: Record<SentRow["delivery"], { label: string; tone: "success" | "neutral" | "danger" | "warn" }> = {
@@ -63,12 +65,12 @@ export default function InboxPage() {
 
   return (
     <>
-      <PageHeader title="Inbox" context={cur.data ? `${cur.data.total.toLocaleString("en-US")} ${view === "replies" ? "replies received" : "messages sent"}` : " "} />
+      <PageHeader title="Inbox" context={view === "scheduled" ? "Upcoming emails · sample data" : cur.data ? `${cur.data.total.toLocaleString("en-US")} ${view === "replies" ? "replies received" : "messages sent"}` : " "} />
       <div className="px-8 py-6 flex flex-col gap-4 relative">
         <div className="flex items-center gap-3 flex-wrap">
           <SegmentedControl
             label="View"
-            className="w-[240px]"
+            className="w-[360px]"
             value={view}
             onChange={(v) => {
               setView(v);
@@ -77,6 +79,7 @@ export default function InboxPage() {
             options={[
               { value: "replies", label: "Replies received" },
               { value: "sent", label: "Sent" },
+              { value: "scheduled", label: "Scheduled" },
             ]}
           />
           <label className="flex items-center gap-2 w-[280px] min-h-10 px-3 box-border border border-control rounded-control bg-surface text-muted">
@@ -99,7 +102,7 @@ export default function InboxPage() {
           )}
         </div>
 
-        <Panel loading={cur.loading} error={cur.error} onRetry={cur.reload} empty={cur.data?.total === 0} emptyText={q || cls ? "Nothing matches." : view === "replies" ? "No replies yet." : "Nothing sent yet."}>
+        {view === "scheduled" ? <ScheduledInbox query={dq} page={page} onPage={setPage} /> : <Panel loading={cur.loading} error={cur.error} onRetry={cur.reload} empty={cur.data?.total === 0} emptyText={q || cls ? "Nothing matches." : view === "replies" ? "No replies yet." : "Nothing sent yet."}>
           <ul className="list-none m-0 p-0">
             {view === "replies"
               ? replies.data?.items.map((r) => {
@@ -142,7 +145,7 @@ export default function InboxPage() {
                 ))}
           </ul>
           {cur.data && <Pager page={page} total={cur.data.total} size={cur.data.page_size} onPage={setPage} />}
-        </Panel>
+        </Panel>}
       </div>
 
       {open && (
@@ -186,6 +189,18 @@ export default function InboxPage() {
                 </article>
               ))}
               {open.kind === "reply" && !open.row.starred && <p className="m-0 text-meta text-muted">Message bodies are deleted on the retention schedule. Star this to keep it.</p>}
+              <div className="p-4 bg-surface border border-line rounded-card">
+                <MessageEditor key={open.row.thread_id} threadId={open.row.thread_id} initialSubject={open.row.subject.startsWith("Re:") ? open.row.subject : `Re: ${open.row.subject}`}
+                  target={{ contact_ref: open.row.contact_ref, timezone: open.row.timezone,
+                    name: open.kind === "reply" ? open.row.from_name : open.row.to.split(" <")[0],
+                    email: open.kind === "reply" ? open.row.from_email : open.row.to.match(/<([^>]+)>/)?.[1] ?? open.row.to }}
+                  onDone={(result) => {
+                    if (result?.status === "sent") {
+                      setOpen((current) => current && current.row.thread_id === result.thread_id ? { ...current, row: { ...current.row, thread: result.thread } } as Open : current);
+                      if (view === "replies") replies.reload(); else sent.reload();
+                    }
+                  }} />
+              </div>
             </div>
           </aside>
         </>

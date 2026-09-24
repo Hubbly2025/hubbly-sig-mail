@@ -5,6 +5,7 @@ import { Button, StatusPill, cx } from "@/components/ui-hubbly";
 import { Dialog, Panel, Skel, useToast } from "@/components/outreach/feedback";
 import { PageHeader, useCan } from "@/components/outreach/shell";
 import { RulesPanel } from "@/components/outreach/RulesPanel";
+import { EmailLeadButton } from "@/components/outreach/MessageComposer";
 import { classification } from "@/components/outreach/format";
 import { api } from "@/lib/outreach/client";
 import { useResource } from "@/lib/outreach/hooks";
@@ -68,7 +69,7 @@ export default function ApprovalInbox() {
   // J / K move, E edits, Enter opens the send confirmation (never sends by itself).
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
-      if (confirm || isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (confirm || document.querySelector('[role="dialog"]') || isTyping() || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || e.keyCode === 229) return;
       if (e.key === "j" || e.key === "k") {
         e.preventDefault();
         const n = items[Math.min(items.length - 1, Math.max(0, idx + (e.key === "j" ? 1 : -1)))];
@@ -156,6 +157,7 @@ export default function ApprovalInbox() {
                   {sel.reply.company ? ` · ${sel.reply.company}` : ""}
                 </h2>
                 <span className="text-meta text-muted">{sel.campaign_name}</span>
+                <EmailLeadButton key={sel.contact_ref} contact_ref={sel.contact_ref} name={sel.reply.from_name} email={sel.reply.from_email} timezone={sel.timezone} />
               </div>
               {sel.thread.map((m) => (
                 <article key={m.id} className={cx("max-w-[80%] bg-surface border border-line rounded-card px-4 py-3.5 flex flex-col gap-2", m.direction === "out" ? "self-end" : "self-start")}>

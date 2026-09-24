@@ -167,6 +167,8 @@ export interface Page<T> {
 export type EnrollmentStatus = "active" | "replied" | "finished" | "bounced" | "unsubscribed" | "paused";
 
 export interface Enrollment {
+  contact_ref: string;
+  timezone: string;
   lead_id: string;
   name: string;
   email: string;
@@ -248,11 +250,15 @@ export interface Message {
 }
 
 export interface InboxBundle {
+  thread_id: string;
+  contact_ref: string;
+  timezone: string;
   /** null when no draft was written — act on the reply id instead. */
   proposal_id: string | null;
   campaign_name: string;
   reply: {
     id: string;
+    thread_id: string;
     from_name: string;
     from_email: string;
     company: string | null;
@@ -266,6 +272,9 @@ export interface InboxBundle {
 
 export interface ReplyRow {
   id: string;
+  thread_id: string;
+  contact_ref: string;
+  timezone: string;
   from_name: string;
   from_email: string;
   subject: string;
@@ -277,8 +286,43 @@ export interface ReplyRow {
   thread: Message[];
 }
 
+export interface MessageInput {
+  subject: string;
+  body: string;
+  /** UTC instant, displayed and selected in the recipient's IANA timezone. */
+  send_at?: string;
+}
+
+export interface ScheduledMessage extends MessageInput {
+  id: string;
+  kind: "reply" | "message";
+  thread_id: string;
+  contact_ref: string;
+  to_name: string;
+  to_email: string;
+  timezone: string;
+  send_at: string;
+  campaign_name: string;
+}
+
+export interface MessageResult {
+  status: "sent" | "scheduled";
+  thread_id: string;
+  thread: Message[];
+}
+
+export interface ScheduledPatch {
+  id: string;
+  subject?: string;
+  body?: string;
+  send_at?: string;
+}
+
 export interface SentRow {
   id: string;
+  thread_id: string;
+  contact_ref: string;
+  timezone: string;
   to: string;
   subject: string;
   snippet: string;

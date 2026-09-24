@@ -4,6 +4,7 @@ import { useState } from "react";
 import { StatusPill, type Tone } from "@/components/ui-hubbly";
 import { Pager, Panel } from "@/components/outreach/feedback";
 import { useResource } from "@/lib/outreach/hooks";
+import { EmailLeadButton } from "@/components/outreach/MessageComposer";
 import type { Campaign, Enrollment, EnrollmentStatus, Page } from "@/lib/outreach/types";
 
 const st: Record<EnrollmentStatus, { label: string; tone: Tone }> = {
@@ -18,7 +19,7 @@ const st: Record<EnrollmentStatus, { label: string; tone: Tone }> = {
 export function Enrolled({ campaign }: { campaign: Campaign }) {
   const [page, setPage] = useState(1);
   const r = useResource<Page<Enrollment>>(`outreach/campaigns/${campaign.id}/enrollments?page=${page}`);
-  const cols = "grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_130px_110px_160px] gap-4 items-center px-5";
+  const cols = "grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_130px_80px_150px_130px] gap-4 items-center px-5";
   return (
     <div className="px-8 py-6">
       <Panel title="Enrolled leads" loading={r.loading} error={r.error} onRetry={r.reload} empty={r.data?.total === 0} emptyText="Nobody is enrolled in this campaign.">
@@ -29,6 +30,7 @@ export function Enrolled({ campaign }: { campaign: Campaign }) {
             <div role="columnheader">Status</div>
             <div role="columnheader">Step</div>
             <div role="columnheader">Next due</div>
+            <div role="columnheader"><span className="sr-only">Actions</span></div>
           </div>
           {r.data?.items.map((e) => (
             <div role="row" key={e.lead_id} className={`${cols} py-3 border-t border-divider`}>
@@ -41,6 +43,7 @@ export function Enrolled({ campaign }: { campaign: Campaign }) {
                 {e.step} of {campaign.steps.length}
               </div>
               <div role="cell" className="text-ink-2">{e.next_due ?? "—"}</div>
+              <div role="cell"><EmailLeadButton contact_ref={e.contact_ref} name={e.name} email={e.email} timezone={e.timezone} /></div>
             </div>
           ))}
         </div>
